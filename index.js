@@ -29,6 +29,33 @@ const json   = require('./namefix.json');
 let isSleeping = false;
 let catchMode  = 'direct'; // 'direct' | 'hint'
 
+// ─── CAPTCHA ALERT FORWARD ────────────────────────────────────────────────────
+// Forward captcha notification to a channel, DM, or group DM.
+// Loaded from config, saveable live from dashboard.
+let captchaAlertTarget = config.captchaAlertTarget || null;
+// shape: { type: 'channel'|'dm'|'group', id: string }
+
+async function forwardCaptchaAlert(time) {
+    if (!captchaAlertTarget?.id) return;
+    const msg = `🚨 **CAPTCHA DETECTED** at ${time}\nYour Poketwo Autocatcher has paused. Solve it in Discord then click ✅ in the dashboard or type \`$captcha_completed\`.`;
+    try {
+        if (captchaAlertTarget.type === 'dm') {
+            const user = await client.users.fetch(captchaAlertTarget.id);
+            const dm   = await user.createDM();
+            await dm.send(msg);
+        } else {
+            // channel or group DM — both resolved via channels cache
+            const ch = client.channels.cache.get(captchaAlertTarget.id)
+                    || await client.channels.fetch(captchaAlertTarget.id).catch(() => null);
+            if (ch) await ch.send(msg);
+            else logEvent(`Captcha alert: channel ${captchaAlertTarget.id} not found`, 'warn');
+        }
+        logEvent(`📨 Captcha alert forwarded to ${captchaAlertTarget.type} ${captchaAlertTarget.id}`, 'info');
+    } catch (e) {
+        logEvent(`Captcha alert forward failed: ${e}`, 'error');
+    }
+}
+
 // ─── CATCH SPEED MODE ────────────────────────────────────────────────────────
 // 'slow'    — gaussian 8–20 s (maximum stealth)
 // 'normal'  — gaussian 1–7 s anti-detection delay (safest for public servers)
@@ -271,7 +298,7 @@ let transferActive = false;
 
 wss.on('connection', ws => {
     const rates = calculateRates();
-    ws.send(JSON.stringify({ type: 'init', data: { ...stats, catchMode, catchSpeed, competitors: Object.values(competitors), ...rates, history } }));
+    ws.send(JSON.stringify({ type: 'init', data: { ...stats, catchMode, catchSpeed, captchaAlertTarget, competitors: Object.values(competitors), ...rates, history } }));
     ws.on('message', raw => {
         try {
             const msg = JSON.parse(raw);
@@ -328,6 +355,23 @@ wss.on('connection', ws => {
                 const ch = client.channels.cache.get(channelId);
                 if (!ch) { broadcast('log', { text: `❌ Channel ${channelId} not found.`, level: 'error' }); return; }
                 startTransfer(ch, targetId);
+            }
+            if (msg.type === 'set_captcha_alert') {
+                const { type, id } = msg.data || {};
+                if (id && ['channel','dm','group'].includes(type)) {
+                    captchaAlertTarget = { type, id };
+                    config.captchaAlertTarget = captchaAlertTarget;
+                    require('fs').writeFileSync('./config.json', JSON.stringify(config, null, 2));
+                    broadcast('captcha_alert_saved', { type, id });
+                    broadcast('log', { text: `📨 Captcha alert → ${type} ${id} saved`, level: 'success' });
+                    logEvent(`Captcha alert target set: ${type} ${id}`, 'success');
+                } else if (!id) {
+                    captchaAlertTarget = null;
+                    config.captchaAlertTarget = null;
+                    require('fs').writeFileSync('./config.json', JSON.stringify(config, null, 2));
+                    broadcast('captcha_alert_saved', { type: null, id: null });
+                    broadcast('log', { text: '📨 Captcha alert target cleared', level: 'info' });
+                }
             }
             if (msg.type === 'add_incense_channel') {
                 const id = msg.data?.channelId?.trim();
@@ -792,9 +836,11 @@ client.on('messageCreate', async message => {
         isSleeping = true; stats.botStatus = 'captcha'; stats.captchas++;
         message.channel.send('Autocatcher paused — captcha detected! Type `$captcha_completed` once solved.');
         logEvent('⚠️ CAPTCHA DETECTED', 'warn');
-        broadcast('captcha', { time: new Date().toLocaleTimeString() });
+        const captchaTime = new Date().toLocaleTimeString();
+        broadcast('captcha', { time: captchaTime });
         broadcast('status', { status: 'captcha', sleeping: true });
         broadcast('stats', { caught: stats.caught, missed: stats.missed, captchas: stats.captchas, spawns: stats.spawns, pc: stats.pc, ...calculateRates() });
+        forwardCaptchaAlert(captchaTime);
         setTimeout(() => { isSleeping = false; stats.botStatus = 'online'; broadcast('status', { status: 'online', sleeping: false }); logEvent('Auto-resumed (5h timeout).', 'info'); }, 18000000);
         return;
     }

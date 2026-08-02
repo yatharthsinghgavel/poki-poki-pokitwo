@@ -326,7 +326,17 @@ input:checked+.sw-track::before{transform:translateX(17px);}
   .grid{padding:12px 12px 32px;}
 }
 
-/* ── SPEED BUTTONS ── */
+/* ── CAPTCHA ALERT FORWARD ── */
+.cap-type-btn {
+  display:inline-flex; flex-direction:column; align-items:center; gap:4px;
+  padding:10px 14px; border-radius:10px; border:1px solid var(--border);
+  background:rgba(255,255,255,.04); color:var(--muted);
+  font-size:.72rem; font-weight:600; cursor:pointer;
+  font-family:'Outfit',sans-serif; transition:all .2s; user-select:none;
+}
+.cap-type-btn .ct-icon { font-size:1.4rem; line-height:1; }
+.cap-type-btn:hover { border-color:var(--border-h); color:var(--text); }
+.cap-type-btn.active { border-color:var(--accent); background:rgba(99,102,241,.12); color:var(--accent); }
 .spd-btn {
   display:inline-flex; align-items:center; gap:6px;
   padding:8px 15px; border-radius:9px; border:1px solid var(--border);
@@ -590,6 +600,35 @@ body.glass-mode .mod > * { position: relative; z-index: 12; }
       <button class="spd-btn spd-instant" id="spd-instant" onclick="setCatchSpeed('instant')">⚡ Instant</button>
     </div>
     <div id="spd-status" style="display:none;padding:8px 18px 14px;"></div>
+    <!-- ── CAPTCHA ALERT FORWARD ── -->
+    <div style="padding:12px 18px 16px;border-top:1px solid var(--border);">
+      <div style="font-size:.68rem;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;font-weight:700;margin-bottom:10px;">📨 Captcha Alert — Forward To</div>
+      <div style="display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;">
+        <div style="display:flex;gap:8px;">
+          <button class="cap-type-btn" id="cat-channel" onclick="selectCapType('channel')">
+            <span class="ct-icon">📢</span>Channel
+          </button>
+          <button class="cap-type-btn" id="cat-dm" onclick="selectCapType('dm')">
+            <span class="ct-icon">💬</span>DM
+          </button>
+          <button class="cap-type-btn" id="cat-group" onclick="selectCapType('group')">
+            <span class="ct-icon">👥</span>Group
+          </button>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:5px;flex:1;min-width:180px;">
+          <label style="font-size:.68rem;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.8px;" id="cat-id-label">Channel / User / Group ID</label>
+          <input id="cat-id-input" type="text" placeholder="e.g. 123456789012345678"
+            style="background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:9px;padding:8px 12px;color:var(--text);font-size:.84rem;outline:none;font-family:'JetBrains Mono',monospace;transition:border-color .2s;"
+            onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='var(--border)'"
+            onkeydown="if(event.key==='Enter')saveCaptchaAlert()" />
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-primary" style="height:38px;" onclick="saveCaptchaAlert()">💾 Save</button>
+          <button class="btn btn-ghost"   style="height:38px;" onclick="clearCaptchaAlert()">✕ Clear</button>
+        </div>
+      </div>
+      <div id="cat-status" style="margin-top:8px;font-size:.76rem;color:var(--muted);font-family:'JetBrains Mono',monospace;"></div>
+    </div>
   </div>
 
   <!-- ── COMPETITOR TRACKER ── -->
@@ -728,6 +767,7 @@ function dispatch(msg) {
     case 'milestone':        onMilestone(msg.data);            break;
     case 'incense':          applyIncense(msg.data);           break;
     case 'incense_removed':  removeIncenseChip(msg.data.channelId); break;
+    case 'captcha_alert_saved': applyCaptchaAlertStatus(msg.data); break;
     case 'competitor':       applyCompetitor(msg.data);        break;
     case 'warning':          showWarning(msg.data.type, msg.data.msg, msg.data.level); break;
     case 'transfer':         handleTransfer(msg.data);         break;
@@ -747,6 +787,7 @@ function applyInit(d) {
   if (d.username)  { elUser.textContent = d.username; elUser2.textContent = d.username; }
   if (d.catchMode)   applyCatchMode(d.catchMode);
   if (d.catchSpeed)  applyCatchSpeed(d.catchSpeed);
+  if (d.captchaAlertTarget) applyCaptchaAlertStatus(d.captchaAlertTarget);
   refreshRate(d.caught ?? 0, d.missed ?? 0);
 
   if (d.recentCatches?.length) {
@@ -1099,6 +1140,49 @@ function setXferLog(text, level) {
   elXferLog.textContent = text;
 }
 function setXferBadge(text, color) { elXferBadge.textContent = text; elXferBadge.style.color = color; }
+
+// ── CAPTCHA ALERT FORWARD ─────────────────────────────────────────────────────
+let selectedCapType = 'channel';
+
+function selectCapType(type) {
+  selectedCapType = type;
+  ['channel','dm','group'].forEach(t => {
+    const btn = E(`cat-${t}`);
+    if (btn) btn.classList.toggle('active', t === type);
+  });
+  const labels = { channel:'Channel ID', dm:'User ID (to DM)', group:'Group DM Channel ID' };
+  const el = E('cat-id-label');
+  if (el) el.textContent = labels[type] || 'ID';
+}
+
+function saveCaptchaAlert() {
+  const id = E('cat-id-input')?.value.trim();
+  if (!id) { setCatStatus('⚠️ Enter an ID first.', 'var(--amber)'); return; }
+  send({ type: 'set_captcha_alert', data: { type: selectedCapType, id } });
+}
+
+function clearCaptchaAlert() {
+  send({ type: 'set_captcha_alert', data: { type: null, id: null } });
+  const input = E('cat-id-input');
+  if (input) input.value = '';
+  ['channel','dm','group'].forEach(t => E(`cat-${t}`)?.classList.remove('active'));
+  setCatStatus('', '');
+}
+
+function applyCaptchaAlertStatus(d) {
+  if (!d?.id) { setCatStatus('No alert configured.', 'var(--muted)'); return; }
+  // restore UI state
+  selectCapType(d.type);
+  const input = E('cat-id-input');
+  if (input) input.value = d.id;
+  const typeLabels = { channel:'📢 Channel', dm:'💬 DM', group:'👥 Group' };
+  setCatStatus(`✅ Alert active → ${typeLabels[d.type] || d.type} ${d.id}`, 'var(--green)');
+}
+
+function setCatStatus(text, color) {
+  const el = E('cat-status');
+  if (el) { el.textContent = text; el.style.color = color; }
+}
 </script>
 
 <script>
