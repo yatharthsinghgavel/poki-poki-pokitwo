@@ -1,0 +1,17 @@
+# Dependencies
+node_modules/
+
+# Config with secrets — NEVER commit this
+config.json
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment files
+.env
+.env.*
