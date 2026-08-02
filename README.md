@@ -219,6 +219,7 @@ For maximum catching with incense:
 
 | Version | Changes |
 |---|---|
+| **v1.6.1** | Custom alarm sound support, 🔊 Test button in dashboard, alarm.mp3 included in repo, browser autoplay policy fix |
 | **v1.6.0** | Full overhaul — gaussian anti-detection delay, boost mode, smart 3-slot queue, competitor tracker with auto-undercut, PC & quest tracker, incense manager (4 channels, correct commands, confirm click), warnings panel, `$boost` command |
 | v1.5.2 | Multi-incense channel support (up to 4), hourly refresh, auto-rebuy |
 | v1.5.1 | Incense channel support, auto-rebuy on expiry |
