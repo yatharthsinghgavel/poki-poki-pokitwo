@@ -133,7 +133,7 @@ You can also trigger this from the **Bulk Transfer** panel in the dashboard.
 
 | Version | Changes |
 |---|---|
-| v1.5.2 | Multi-incense channel support (up to 4), auto shard farming every 2h, auto buy + use 2h incense at boot and on schedule, skip channels with active incense |
+| v1.6.0 | Full overhaul: correct incense commands (`buy incense` in channel, confirm button click), smart 3-slot queue (drops backlog), gaussian 1-7s anti-detection delay with session jitter, boost mode (300-800ms toggleable from dashboard/Discord), competitor tracker with auto-undercut, PC earnings tracker, quest milestone alerts, incense status panel per channel, warnings & health panel, `$boost` Discord command |
 | v1.5.1 | Incense channel support — separate spam + catch channel for incense, auto-rebuy and re-use when incense runs out |
 | v1.5.0 | Added Direct Catching as default, 1-7s anti-detection human delay, anti-collision catch queue, Catch Mode Toggle on dashboard, and modernized glassmorphism UI |
 | v1.4.0 | Web dashboard, WebSocket events, pause/resume, bulk transfer, captcha audio alert |

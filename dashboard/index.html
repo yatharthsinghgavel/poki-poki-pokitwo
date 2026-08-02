@@ -395,8 +395,27 @@
 
   <div class="stat-card cyan">
     <div class="stat-label">Anti-Detection</div>
-    <div class="stat-value cyan" style="font-size:1.4rem;margin-top:2px;">1s – 7s</div>
+    <div class="stat-value cyan" id="stat-delay" style="font-size:1.4rem;margin-top:2px;">1s – 7s</div>
     <div class="stat-sub" id="stat-mode-sub">Mode: Direct Catch</div>
+  </div>
+
+  <div class="stat-card green" style="grid-column:1;">
+    <div class="stat-label">Est. PC Earned</div>
+    <div class="stat-value green" id="stat-pc">0</div>
+    <div class="stat-sub">pokécoins this session</div>
+  </div>
+
+  <div class="stat-card indigo" style="grid-column:2;">
+    <div class="stat-label">Quest Progress</div>
+    <div class="stat-value indigo" id="stat-quest-pct" style="font-size:1.4rem;">—</div>
+    <div class="stat-sub" id="stat-quest-sub">Next: —</div>
+  </div>
+
+  <div class="stat-card yellow" style="grid-column:3 / 6;">
+    <div class="stat-label">Incense Channels</div>
+    <div id="stat-incense" style="font-size:.82rem;color:var(--subtle);margin-top:6px;display:flex;gap:10px;flex-wrap:wrap;">
+      <span>Checking...</span>
+    </div>
   </div>
 
   <!-- LIVE TICKER & ANTI-DETECTION QUEUE BAR -->
@@ -441,8 +460,31 @@
       <button class="btn btn-success" onclick="resolveCaptcha()">✅ Mark Captcha Solved</button>
       <button class="btn btn-ghost" id="pause-btn" onclick="pauseBot()">⏸ Pause Bot</button>
       <button class="btn btn-primary" id="resume-btn" onclick="resumeBot()" style="display:none;">▶️ Resume Bot</button>
+      <button class="btn btn-danger" id="boost-btn" onclick="toggleBoost()" title="Boost mode: fast catch (300-800ms). Useful in competitive servers.">🚀 Boost: OFF</button>
       <button class="btn btn-outline" onclick="clearCatches()">🗑 Clear Catches</button>
       <div id="uptime">Account: <span id="stat-user" style="color:var(--text);font-weight:700;">—</span> | Uptime: <span id="uptime-val" style="color:var(--accent);">—</span></div>
+    </div>
+  </div>
+
+  <!-- COMPETITOR TRACKER PANEL -->
+  <div class="panel" style="grid-column:1/-1;">
+    <div class="panel-header">
+      ⚡ Competitor Tracker
+      <span id="comp-ceiling-badge" style="font-size:.75rem;color:var(--muted);">No competitors yet — full delay range active</span>
+    </div>
+    <div id="comp-list" style="padding:16px 20px;font-size:.82rem;color:var(--muted);font-family:'JetBrains Mono',monospace;">
+      Watching for other bots/users sending catch commands in the same channels…
+    </div>
+  </div>
+
+  <!-- WARNINGS PANEL -->
+  <div class="panel" style="grid-column:1/-1;">
+    <div class="panel-header">
+      🛡️ Warnings &amp; Health
+      <span id="health-badge" style="font-size:.75rem;color:var(--accent2);">All systems normal</span>
+    </div>
+    <div id="warnings-list" style="padding:14px 20px;display:flex;flex-wrap:wrap;gap:10px;min-height:48px;align-items:center;">
+      <span style="font-size:.82rem;color:var(--muted);">No warnings.</span>
     </div>
   </div>
 
@@ -569,6 +611,24 @@ function handleEvent(msg) {
     case 'transfer':
       handleTransferUpdate(msg.data);
       break;
+    case 'competitor':
+      handleCompetitorUpdate(msg.data);
+      break;
+    case 'warning':
+      handleWarning(msg.data);
+      break;
+    case 'boost':
+      handleBoostUpdate(msg.data);
+      break;
+    case 'quest':
+      handleQuestUpdate(msg.data);
+      break;
+    case 'milestone':
+      handleMilestone(msg.data);
+      break;
+    case 'incense':
+      handleIncenseUpdate(msg.data);
+      break;
   }
 }
 
@@ -589,6 +649,9 @@ function applyInit(data) {
     data.recentCatches.forEach(c => appendCatchRow(c));
   }
 
+  if (data.pc !== undefined) document.getElementById('stat-pc').textContent = data.pc.toLocaleString();
+  if (data.boostMode !== undefined) handleBoostUpdate({ active: data.boostMode });
+
   if (data.startTime) {
     startTime = data.startTime;
     startUptimeTimer();
@@ -604,6 +667,7 @@ function updateStats(data) {
   if (data.captchas !== undefined)   document.getElementById('stat-captchas').textContent = data.captchas;
   if (data.spawns   !== undefined)   document.getElementById('stat-spawns').textContent   = data.spawns;
   if (data.queueSize!== undefined)   document.getElementById('queue-count').textContent   = data.queueSize;
+  if (data.pc       !== undefined)   document.getElementById('stat-pc').textContent       = data.pc.toLocaleString();
 
   const caught = parseInt(document.getElementById('stat-caught').textContent) || 0;
   const missed = parseInt(document.getElementById('stat-missed').textContent) || 0;
@@ -864,6 +928,122 @@ function escHtml(str) {
     .replace(/>/g,'&gt;')
     .replace(/"/g,'&quot;');
 }
+
+function handleCompetitorUpdate(data) {
+  // Update ceiling badge
+  const badge = document.getElementById('comp-ceiling-badge');
+  badge.textContent = `Active ceiling: ${data.ceiling}ms — beating ${data.all.length} competitor(s)`;
+  badge.style.color = '#f59e0b';
+
+  // Rebuild competitor table
+  const list = document.getElementById('comp-list');
+  if (!data.all || data.all.length === 0) return;
+
+  let html = `<table style="width:100%;border-collapse:collapse;">
+    <thead>
+      <tr style="color:var(--muted);font-size:.72rem;text-transform:uppercase;letter-spacing:.6px;">
+        <th style="text-align:left;padding:4px 10px 8px 0;">Username</th>
+        <th style="text-align:right;padding:4px 10px 8px;">Fastest</th>
+        <th style="text-align:right;padding:4px 10px 8px;">Avg</th>
+        <th style="text-align:right;padding:4px 0 8px;">Samples</th>
+      </tr>
+    </thead><tbody>`;
+
+  // Sort by fastest
+  const sorted = [...data.all].sort((a, b) => a.fastest - b.fastest);
+  sorted.forEach((c, i) => {
+    const color = i === 0 ? '#ef4444' : 'var(--text)';
+    const crown = i === 0 ? '👑 ' : '';
+    html += `<tr style="border-top:1px solid var(--border);">
+      <td style="padding:7px 10px 7px 0;color:${color};font-weight:700;">${crown}${escHtml(c.name)}</td>
+      <td style="text-align:right;padding:7px 10px;color:${color};">${c.fastest}ms</td>
+      <td style="text-align:right;padding:7px 10px;color:var(--subtle);">${c.avg}ms</td>
+      <td style="text-align:right;padding:7px 0;color:var(--muted);">${c.samples}</td>
+    </tr>`;
+  });
+  html += `</tbody></table>
+  <div style="margin-top:10px;font-size:.75rem;color:var(--accent2);">
+    ⚡ Your catch delay ceiling: <strong style="color:var(--warn);">${data.ceiling}ms</strong> — 300ms under the fastest competitor
+  </div>`;
+
+  list.innerHTML = html;
+  addLog(`⚡ Competitor ${escHtml(data.username)}: ${data.elapsed}ms (fastest: ${data.fastest}ms) — your ceiling: ${data.ceiling}ms`, 'warn');
+}
+
+// ---- Boost Mode ----
+function toggleBoost() {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'toggle_boost' }));
+}
+function handleBoostUpdate(data) {
+  const btn = document.getElementById('boost-btn');
+  if (!btn) return;
+  if (data.active) {
+    btn.textContent = '🚀 Boost: ON';
+    btn.style.background = '#f59e0b';
+    btn.style.color = '#000';
+    btn.title = 'Boost mode active — fast 300-800ms catch delay';
+  } else {
+    btn.textContent = '🚀 Boost: OFF';
+    btn.style.background = '';
+    btn.style.color = '';
+    btn.title = 'Enable boost mode for faster catching';
+  }
+}
+
+// ---- Quest Progress ----
+function handleQuestUpdate(data) {
+  document.getElementById('stat-quest-pct').textContent = data.pct + '%';
+  document.getElementById('stat-quest-sub').textContent = `${data.total}/${data.next} → ${data.reward.toLocaleString()} PC`;
+}
+
+// ---- Milestone ----
+function handleMilestone(data) {
+  triggerWarning('milestone_' + data.pokemon, `💰 ${data.count}th ${escHtml(data.pokemon)} — +${data.pc} PC`, 'success');
+}
+
+// ---- Incense Status ----
+const incenseMap = {};
+function handleIncenseUpdate(data) {
+  incenseMap[data.channelId] = data;
+  const el = document.getElementById('stat-incense');
+  if (!el) return;
+  const pills = Object.values(incenseMap).map(ch => {
+    const color = ch.active ? 'var(--accent2)' : 'var(--muted)';
+    const icon  = ch.active ? '🟢' : '⚪';
+    return `<span style="color:${color};font-weight:600;">${icon} #${escHtml(ch.name || ch.channelId)}</span>`;
+  });
+  el.innerHTML = pills.join('') || '<span style="color:var(--muted);">No incense channels</span>';
+}
+
+// ---- Warnings ----
+const activeWarnings = {};
+function handleWarning(data) { triggerWarning(data.type, data.msg, data.level || 'warn'); }
+function triggerWarning(id, msg, level = 'warn') {
+  const list  = document.getElementById('warnings-list');
+  const badge = document.getElementById('health-badge');
+  if (!list) { addLog(msg, level); return; }
+  const placeholder = list.querySelector('span');
+  if (placeholder && list.children.length === 1 && !placeholder.id) list.innerHTML = '';
+  let pill = document.getElementById(`warn-${id}`);
+  if (!pill) { pill = document.createElement('div'); pill.id = `warn-${id}`; list.appendChild(pill); }
+  const colors = { warn:['rgba(245,158,11,.15)','rgba(245,158,11,.4)','#f59e0b'], error:['rgba(239,68,68,.15)','rgba(239,68,68,.4)','#ef4444'], success:['rgba(16,185,129,.15)','rgba(16,185,129,.4)','#10b981'], info:['rgba(99,102,241,.15)','rgba(99,102,241,.4)','#6366f1'] };
+  const [bg, border, text] = colors[level] || colors.warn;
+  pill.style.cssText = `display:inline-flex;align-items:center;gap:8px;padding:7px 14px;border-radius:10px;font-size:.82rem;font-weight:600;background:${bg};border:1px solid ${border};color:${text};margin:3px;`;
+  pill.textContent = msg;
+  if (activeWarnings[id]?.timer) clearTimeout(activeWarnings[id].timer);
+  activeWarnings[id] = { timer: setTimeout(() => { pill.remove(); delete activeWarnings[id]; if (list.children.length === 0) { list.innerHTML = '<span style="font-size:.82rem;color:var(--muted);">No warnings.</span>'; badge.textContent = 'All systems normal'; badge.style.color = 'var(--accent2)'; } }, 30000) };
+  badge.textContent = `${Object.keys(activeWarnings).length} active warning(s)`;
+  badge.style.color = level === 'error' ? 'var(--danger)' : '#f59e0b';
+  addLog(msg, level);
+}
+
+// Periodic health check
+setInterval(() => {
+  const caught = parseInt(document.getElementById('stat-caught').textContent) || 0;
+  const missed = parseInt(document.getElementById('stat-missed').textContent) || 0;
+  if (caught + missed > 10 && missed / (caught + missed) > 0.4)
+    triggerWarning('miss_rate', `⚠️ High miss rate: ${Math.round(missed/(caught+missed)*100)}%`, 'warn');
+}, 30000);
 
 connect();
 </script>

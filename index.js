@@ -1,103 +1,143 @@
 /*
-@Developer: 🔥⃤•AK_ØPᵈᵉᵛ✓#6326 / akshatop
-Name: Poketwo-Autocatcher
-Version: V1.3.2
-Description: bot to help users with catching pokemons
-@Supported: poketwo/pokemon
-*/
-const Discord = require("discord.js-selfbot-v13")
-const client = new Discord.Client({ checkUpdate: false });
+ * Poketwo-Autocatcher
+ * Version: V1.6.0
+ * Repo: https://github.com/yatharthsinghgavel/poki-poki-pokitwo
+ *
+ * KEY FACTS (researched from official docs):
+ *  - Incense: costs 50 shards (=10,000 PC). Buy with "@Pokétwo buy incense" IN the target channel.
+ *    Spawns 1 pokemon every 20s for 1 hour (180 total). Stop with "@Pokétwo stopincense".
+ *  - Shards: premium currency. Buy with "@Pokétwo buy shard <n>" (200 PC each), or real money.
+ *  - Spawn rate: 1 spawn per 24 messages. 1 user @ 1msg/1.5s = spawn every 36s.
+ *  - PC from catches: 35 (1st), 350 (10th), 3500 (100th), 35000 (1000th)
+ *  - Quests: up to 50,000 PC per region (8 regions)
+ *  - Redirect spawns: "@Pokétwo redirect #channel"
+ */
+const Discord = require("discord.js-selfbot-v13");
+const client  = new Discord.Client({ checkUpdate: false });
 const express = require('express');
-const http = require('http');
+const http    = require('http');
 const WebSocket = require('ws');
-const path = require('path');
-const { solveHint, checkRarity } = require("pokehint")
+const path    = require('path');
+const { solveHint, checkRarity } = require("pokehint");
 const { ocrSpace } = require('ocr-space-api-wrapper');
 
-const config = require('./config.json')
-const json = require('./namefix.json');
-const allowedChannels = [];
+const config = require('./config.json');
+const json   = require('./namefix.json');
+
 let isSleeping = false;
-let catchMode = 'direct'; // 'direct' or 'hint' — toggled from dashboard
+let catchMode  = 'direct'; // 'direct' | 'hint'
 
-// ---- CATCH QUEUE (anti-detection: never send two catches at the same time) ----
+// ─── ANTI-DETECTION ──────────────────────────────────────────────────────────
+// Each session gets a unique jitter so timing fingerprint changes on every restart.
+const SESSION_JITTER = Math.floor(Math.random() * 800) - 400; // ±400ms, fixed per session
+
+// humanDelay is defined after boostMode — see BOOST MODE section below
+
+// ─── SMART CATCH QUEUE ───────────────────────────────────────────────────────
+// Max 3 pending. If backlogged beyond 3, drop oldest (it's likely already caught).
 const catchQueue = [];
-let catchBusy = false;
-let lastCatchTime = 0;
-
-function humanDelay() {
-    // Fast mode: 300-6500ms — beats public version while looking human
-    return Math.floor(Math.random() * 6200) + 300;
-}
+let   catchBusy  = false;
+let   lastCatchTime = 0;
 
 async function processCatchQueue() {
     if (catchBusy || catchQueue.length === 0) return;
     catchBusy = true;
-
     while (catchQueue.length > 0) {
         const job = catchQueue.shift();
-        broadcast('queue', { size: catchQueue.length, processing: job.name });
-
-        // Ensure minimum gap from last catch (at least 300ms between any two catch commands)
+        broadcast('queue', { size: catchQueue.length });
         const elapsed = Date.now() - lastCatchTime;
-        const minGap = 300 + Math.floor(Math.random() * 200); // 300-500ms minimum gap
-        if (elapsed < minGap) {
-            await sleep(minGap - elapsed);
-        }
-
-        // Wait the human-like delay
+        const minGap  = 400 + Math.floor(Math.random() * 200);
+        if (elapsed < minGap) await sleep(minGap - elapsed);
         await sleep(job.delay);
-
         lastCatchTime = Date.now();
-        try {
-            await job.execute();
-        } catch (err) {
-            logEvent(`Catch queue error: ${err}`, 'error');
-        }
+        try { await job.fn(); } catch (e) { logEvent(`Queue error: ${e}`, 'error'); }
     }
-
     catchBusy = false;
-    broadcast('queue', { size: 0, processing: null });
+    broadcast('queue', { size: 0 });
 }
 
-function enqueueCatch(name, delay, executeFn) {
-    catchQueue.push({ name, delay, execute: executeFn });
+function enqueueCatch(name, fn) {
+    if (catchQueue.length >= 3) {
+        logEvent(`Queue full — dropping oldest (${catchQueue[0].name}) to catch ${name}`, 'warn');
+        catchQueue.shift();
+    }
+    const delay = humanDelay();
+    catchQueue.push({ name, delay, fn });
     stats.spawns++;
-    broadcast('stats', {
-        caught: stats.caught, missed: stats.missed, captchas: stats.captchas,
-        spawns: stats.spawns, queueSize: catchQueue.length
-    });
+    broadcast('stats', { caught: stats.caught, missed: stats.missed,
+                         captchas: stats.captchas, spawns: stats.spawns,
+                         pc: stats.pc, queueSize: catchQueue.length });
     processCatchQueue();
 }
 
-//------------------------- DASHBOARD SERVER --------------------------------//
+// ─── COMPETITOR TRACKER ──────────────────────────────────────────────────────
+const spawnTimes  = {}; // channelId → { name, ts }
+const competitors = {}; // userId    → { name, times[], fastest, avg }
 
-const app = express();
+function recordSpawn(channelId, name) {
+    spawnTimes[channelId] = { name, ts: Date.now() };
+}
+
+function recordCompetitorCatch(userId, username, channelId) {
+    const spawn = spawnTimes[channelId];
+    if (!spawn) return;
+    const elapsed = Date.now() - spawn.ts;
+    if (elapsed < 200 || elapsed > 30000) return;
+    if (!competitors[userId]) {
+        competitors[userId] = { name: username, times: [], fastest: 9999, avg: 9999 };
+        logEvent(`🔍 Competitor detected: ${username}`, 'warn');
+    }
+    const c = competitors[userId];
+    c.name = username;
+    c.times.push(elapsed);
+    if (c.times.length > 30) c.times.shift();
+    c.fastest = Math.min(...c.times);
+    c.avg = Math.round(c.times.reduce((a, b) => a + b, 0) / c.times.length);
+    logEvent(`⚡ ${username}: caught in ${elapsed}ms (fastest: ${c.fastest}ms, avg: ${c.avg}ms)`, 'warn');
+    broadcast('competitor', {
+        userId, username, elapsed, fastest: c.fastest, avg: c.avg,
+        all: Object.values(competitors).map(x => ({
+            name: x.name, fastest: x.fastest, avg: x.avg, samples: x.times.length
+        }))
+    });
+}
+
+// ─── DASHBOARD SERVER ────────────────────────────────────────────────────────
+const app    = express();
 const server = http.createServer(app);
-const wss = new WebSocket.Server({ server });
+const wss    = new WebSocket.Server({ server });
 
-if (Number(process.version.slice(1).split(".")[0]) < 8)
-    throw new Error("Node 8.0.0 or higher is required.");
+if (Number(process.version.slice(1).split('.')[0]) < 8)
+    throw new Error('Node 8.0.0 or higher is required.');
 
-// Serve dashboard static files
 app.use(express.static(path.join(__dirname, 'dashboard')));
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'dashboard', 'index.html'));
-});
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'dashboard', 'index.html')));
 
-// Stats tracking
+// ─── STATS ───────────────────────────────────────────────────────────────────
+// PC milestones per-pokemon: key = catchCount → PC earned at that milestone
+const PC_MILESTONES = { 1:35, 10:350, 100:3500, 1000:35000, 10000:350000 };
+const catchCountPerPokemon = {}; // pokemonName → total catches
+let   totalPCEarned = 0;
+
+// Quest milestones (per region): 20→2000, 50→5000, 100→10000, 200→20000, 500→50000
+const QUEST_MILESTONES = [
+    { target: 20,  reward: 2000  },
+    { target: 50,  reward: 5000  },
+    { target: 100, reward: 10000 },
+    { target: 200, reward: 20000 },
+    { target: 500, reward: 50000 },
+];
+
 const stats = {
-    caught: 0,
-    missed: 0,
-    captchas: 0,
-    spawns: 0,
+    caught: 0, missed: 0, captchas: 0, spawns: 0,
+    pc: 0,           // estimated PC earned this session
     startTime: Date.now(),
-    recentCatches: [],   // last 50 catches
+    recentCatches: [],
     botStatus: 'online',
     username: '',
+    incenseStatus: {}, // channelId → { active, name, spawnsLeft }
 };
 
-// Broadcast to all connected dashboard clients
 function broadcast(type, data) {
     const payload = JSON.stringify({ type, data, ts: Date.now() });
     wss.clients.forEach(ws => {
@@ -105,134 +145,124 @@ function broadcast(type, data) {
     });
 }
 
+function trackPC(pokemonName) {
+    catchCountPerPokemon[pokemonName] = (catchCountPerPokemon[pokemonName] || 0) + 1;
+    const n = catchCountPerPokemon[pokemonName];
+    const pc = PC_MILESTONES[n] || 35; // base 35 PC per catch
+    totalPCEarned += pc;
+    stats.pc = totalPCEarned;
+    // Quest progress broadcast
+    const totalCaught = stats.caught;
+    const nextQuest = QUEST_MILESTONES.find(q => q.target > totalCaught);
+    if (nextQuest) {
+        broadcast('quest', {
+            total: totalCaught,
+            next: nextQuest.target,
+            reward: nextQuest.reward,
+            pct: Math.round((totalCaught / nextQuest.target) * 100)
+        });
+    }
+    if (PC_MILESTONES[n]) {
+        broadcast('milestone', { pokemon: pokemonName, count: n, pc });
+        logEvent(`💰 Milestone! ${n}th ${pokemonName} caught — earned ${pc} PC`, 'success');
+    }
+}
+
 // Transfer state
 let transferActive = false;
-let transferChannelId = null;
 
-// Send full state to a newly connected client
 wss.on('connection', ws => {
-    ws.send(JSON.stringify({ type: 'init', data: { ...stats, catchMode } }));
-
+    ws.send(JSON.stringify({ type: 'init', data: { ...stats, catchMode, competitors: Object.values(competitors) } }));
     ws.on('message', raw => {
         try {
             const msg = JSON.parse(raw);
             if (msg.type === 'captcha_done') {
-                isSleeping = false;
-                stats.botStatus = 'online';
+                isSleeping = false; stats.botStatus = 'online';
                 broadcast('status', { status: 'online', sleeping: false });
-                broadcast('log', { text: '✅ Captcha marked as completed from dashboard', level: 'success' });
+                broadcast('log', { text: '✅ Captcha resolved from dashboard', level: 'success' });
             }
             if (msg.type === 'pause_bot') {
-                isSleeping = true;
-                stats.botStatus = 'paused';
+                isSleeping = true; stats.botStatus = 'paused';
                 broadcast('status', { status: 'paused', sleeping: true });
-                broadcast('log', { text: '⏸ Bot paused from dashboard.', level: 'warn' });
+                broadcast('log', { text: '⏸ Bot paused.', level: 'warn' });
             }
             if (msg.type === 'resume_bot') {
-                isSleeping = false;
-                stats.botStatus = 'online';
+                isSleeping = false; stats.botStatus = 'online';
                 broadcast('status', { status: 'online', sleeping: false });
-                broadcast('log', { text: '▶️ Bot resumed from dashboard.', level: 'success' });
-            }
-            // Dashboard triggered transfer
-            if (msg.type === 'transfer_all') {
-                const { targetId, channelId } = msg.data;
-                if (!targetId || !channelId) return;
-                const ch = client.channels.cache.get(channelId);
-                if (!ch) {
-                    broadcast('log', { text: `❌ Channel ${channelId} not found.`, level: 'error' });
-                    return;
-                }
-                startTransfer(ch, targetId);
+                broadcast('log', { text: '▶️ Bot resumed.', level: 'success' });
             }
             if (msg.type === 'set_catch_mode') {
                 const mode = msg.data?.mode;
                 if (mode === 'direct' || mode === 'hint') {
                     catchMode = mode;
-                    broadcast('catch_mode', { mode: catchMode });
-                    broadcast('log', { text: `🔄 Catch mode changed to: ${catchMode.toUpperCase()}`, level: 'success' });
-                    logEvent(`Catch mode changed to: ${catchMode}`, 'info');
+                    broadcast('catch_mode', { mode });
+                    broadcast('log', { text: `🔄 Catch mode: ${mode.toUpperCase()}`, level: 'success' });
                 }
+            }
+            if (msg.type === 'toggle_boost') {
+                boostMode = !boostMode;
+                broadcast('boost', { active: boostMode });
+                broadcast('log', { text: boostMode ? '🚀 Boost mode ON — fast catch enabled' : '🛡️ Boost mode OFF — stealth timing restored', level: boostMode ? 'warn' : 'success' });
+                logEvent(`Boost mode: ${boostMode ? 'ON' : 'OFF'}`, 'warn');
+            }
+            if (msg.type === 'transfer_all') {
+                const { targetId, channelId } = msg.data;
+                const ch = client.channels.cache.get(channelId);
+                if (!ch) { broadcast('log', { text: `❌ Channel ${channelId} not found.`, level: 'error' }); return; }
+                startTransfer(ch, targetId);
             }
         } catch (_) {}
     });
 });
 
 server.listen(process.env.PORT || 3000, () => {
-    console.log(`Dashboard running at http://localhost:${process.env.PORT || 3000}`);
+    console.log(`Dashboard: http://localhost:${process.env.PORT || 3000}`);
 });
 
-//--------------------------------------------------------------//
-
-//------------------------- HELPERS --------------------------------//
+// ─── HELPERS ─────────────────────────────────────────────────────────────────
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 function findOutput(input) {
-    if (json.hasOwnProperty(input)) return json[input];
-    return input;
+    return json.hasOwnProperty(input) ? json[input] : input;
 }
 
 function extractPokemonName(message) {
-    let rawText = null;
-
+    let raw = null;
     if (message.content) {
-        const content = message.content.trim();
-
-        // 1. Format: "Deino :_:【:dark_type::dragon_type:】" or "Pidove :_:【:normal_type::flying_type:】"
-        if (content.includes(":_:") || content.includes("【")) {
-            const match = content.match(/^[\*\#\s]*([^\n\r:_:\【\<]+?)\s*(?::_|:_:|【)/);
-            if (match && match[1].trim()) {
-                rawText = match[1].trim();
-            }
+        const c = message.content.trim();
+        if (c.includes(':_:') || c.includes('【')) {
+            const m = c.match(/^[\*\#\s]*([^\n\r:_:\【\<]+?)\s*(?::_|:_:|【)/);
+            if (m?.[1]?.trim()) raw = m[1].trim();
         }
-
-        // 2. Format: "## PokemonName <emoji>"
-        if (!rawText && content.startsWith("##")) {
-            const contentMatch = content.match(/^##\s+([^\n\r\<【]+?)[\s<【]/);
-            if (contentMatch && contentMatch[1].trim()) {
-                rawText = contentMatch[1].trim();
-            }
+        if (!raw && c.startsWith('##')) {
+            const m = c.match(/^##\s+([^\n\r\<【]+?)[\s<【]/);
+            if (m?.[1]?.trim()) raw = m[1].trim();
         }
     }
-
-    // 3. Fallback: Embed titles and descriptions
-    if (!rawText && message.embeds && message.embeds.length > 0) {
+    if (!raw && message.embeds?.length) {
         for (const e of message.embeds) {
-            const raw = (e.title || "") + " " + (e.description || "");
-            const match = raw.match(/^\*?\*?([^\n\r:_:\【🏃\[]+?)\*?\*?\s*(🏃|【|\[|:_:|$)/);
-            if (match && match[1].trim()) {
-                rawText = match[1].trim();
-                break;
-            }
-            const descMatch = (e.description || "").match(/\*\*([^\n\r\*]+?)\*\*/);
-            if (descMatch && descMatch[1].trim()) {
-                rawText = descMatch[1].trim();
-                break;
-            }
+            const t = (e.title || '') + ' ' + (e.description || '');
+            const m = t.match(/^\*?\*?([^\n\r:_:\【🏃\[]+?)\*?\*?\s*(🏃|【|\[|:_:|$)/);
+            if (m?.[1]?.trim()) { raw = m[1].trim(); break; }
+            const d = (e.description || '').match(/\*\*([^\n\r\*]+?)\*\*/);
+            if (d?.[1]?.trim()) { raw = d[1].trim(); break; }
         }
     }
-
-    if (!rawText) return null;
-
-    // Clean up markdown formatting characters (*, #, _, spaces)
-    rawText = rawText.replace(/^[\*\#\s_]+|[\*\#\s_]+$/g, '').trim();
-    if (!rawText) return null;
-
-    return findOutput(rawText);
+    if (!raw) return null;
+    raw = raw.replace(/^[\*\#\s_]+|[\*\#\s_]+$/g, '').trim();
+    return raw ? findOutput(raw) : null;
 }
 
 function addCatch(name, rarity, guild, channel) {
-    const entry = {
-        name,
-        rarity,
-        guild,
-        channel,
-        time: new Date().toLocaleTimeString()
-    };
+    const entry = { name, rarity, guild, channel, time: new Date().toLocaleTimeString() };
     stats.caught++;
     stats.recentCatches.unshift(entry);
     if (stats.recentCatches.length > 50) stats.recentCatches.pop();
+    trackPC(name);
     broadcast('catch', entry);
-    broadcast('stats', { caught: stats.caught, missed: stats.missed, captchas: stats.captchas });
+    broadcast('stats', { caught: stats.caught, missed: stats.missed,
+                         captchas: stats.captchas, spawns: stats.spawns,
+                         pc: stats.pc, queueSize: catchQueue.length });
 }
 
 function logEvent(text, level = 'info') {
@@ -240,611 +270,429 @@ function logEvent(text, level = 'info') {
     broadcast('log', { text, level, time: new Date().toLocaleTimeString() });
 }
 
-//--------------------------------------------------------------//
+// ─── CATCH EXECUTOR (shared by all methods) ──────────────────────────────────
+function doCatch(name, channel, guildName, chanName) {
+    recordSpawn(channel.id, name);
+    logEvent(`Pokémon spawned: ${name}`, 'info');
+    broadcast('spawn', { name, method: 'Direct' });
 
-//------------------------- TRANSFER ALL --------------------------------//
+    enqueueCatch(name, async () => {
+        logEvent(`Catching ${name}...`, 'info');
+        await channel.send(`<@716390085896962058> c ${name}`)
+            .catch(e => { logEvent(`Send error: ${e}`, 'error'); });
 
-// startTransfer: initiates a trade with targetId in the given channel,
-// waits for them to accept, then batch-adds all pokemon (p!t aa repeated),
-// then confirms via button click.
+        const collector = new Discord.MessageCollector(
+            channel, m => m.author.id === '716390085896962058', { max: 1, time: 13000 }
+        );
+        await new Promise(resolve => {
+            collector.on('collect', async collected => {
+                if (collected.content.includes('Congratulations')) {
+                    function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase(); }
+                    let rarity;
+                    const n2 = cap(name);
+                    try { rarity = await checkRarity(n2); } catch { rarity = 'Not Found'; }
+                    addCatch(n2, rarity, guildName, chanName);
+                    client.channels.cache.get(config.logChannelID)
+                        ?.send(`[${guildName}/#${chanName}] **__${n2}__** Rarity ${rarity}`)
+                        .catch(e => logEvent(`Log error: ${e}`, 'error'));
+                }
+                resolve();
+            });
+            collector.on('end', () => resolve());
+        });
+    });
+}
+
+// ─── TRANSFER ALL ────────────────────────────────────────────────────────────
 async function startTransfer(channel, targetId) {
     if (transferActive) {
-        broadcast('log', { text: '⚠️ A transfer is already in progress.', level: 'warn' });
-        return;
+        broadcast('log', { text: '⚠️ Transfer already in progress.', level: 'warn' }); return;
     }
     transferActive = true;
-    transferChannelId = channel.id;
-
     logEvent(`Starting transfer to <@${targetId}>...`, 'info');
     broadcast('transfer', { status: 'started', targetId });
 
-    // Step 1: Initiate trade
     await channel.send(`<@716390085896962058> trade <@${targetId}>`);
-    logEvent('Trade request sent — waiting for target to accept...', 'info');
+    logEvent('Trade request sent — waiting for accept...', 'info');
 
-    // Step 2: Wait for Pokétwo to confirm trade opened (embed with "Trade between")
-    let tradeOpenMsg = null;
     try {
-        tradeOpenMsg = await new Promise((resolve, reject) => {
-            const collector = new Discord.MessageCollector(channel, m => m.author.id === '716390085896962058', { time: 120000 });
-            collector.on('collect', m => {
-                const txt = m.content + (m.embeds[0]?.description || '') + (m.embeds[0]?.title || '');
-                if (txt.toLowerCase().includes('trade between') || txt.toLowerCase().includes('trade started')) {
-                    collector.stop();
-                    resolve(m);
-                }
+        await new Promise((resolve, reject) => {
+            const col = new Discord.MessageCollector(channel, m => m.author.id === '716390085896962058', { time: 120000 });
+            col.on('collect', m => {
+                const t = (m.content + (m.embeds[0]?.description || '') + (m.embeds[0]?.title || '')).toLowerCase();
+                if (t.includes('trade between') || t.includes('trade started')) { col.stop(); resolve(); }
             });
-            collector.on('end', (col, reason) => {
-                if (reason !== 'user') reject(new Error('Trade not accepted within 2 minutes.'));
-            });
+            col.on('end', (_, r) => { if (r !== 'user') reject(new Error('Not accepted in 2 minutes.')); });
         });
-    } catch (err) {
-        logEvent(`❌ Transfer cancelled: ${err.message}`, 'error');
-        broadcast('transfer', { status: 'failed', reason: err.message });
-        transferActive = false;
-        return;
+    } catch (e) {
+        logEvent(`❌ Transfer cancelled: ${e.message}`, 'error');
+        broadcast('transfer', { status: 'failed', reason: e.message });
+        transferActive = false; return;
     }
 
-    logEvent('Trade accepted! Adding all Pokémon in batches of 10...', 'success');
-
-    // Step 3: Batch add — p!t aa adds 10 at a time, repeat until Pokétwo
-    // signals nothing left to add.
-    let batchCount = 0;
-    let done = false;
-
+    logEvent('Trade accepted! Adding Pokémon in batches...', 'success');
+    let batches = 0, done = false;
     while (!done) {
         await sleep(1800);
         await channel.send(`<@716390085896962058> t aa`);
-        batchCount++;
-        logEvent(`Batch ${batchCount}: sent p!t aa`, 'info');
-        broadcast('transfer', { status: 'adding', batch: batchCount });
-
-        // Wait for Pokétwo's response to this batch
+        batches++;
+        broadcast('transfer', { status: 'adding', batch: batches });
         await sleep(3500);
-
         const recent = await channel.messages.fetch({ limit: 6 });
         for (const [, m] of recent) {
             if (m.author.id !== '716390085896962058') continue;
-            const txt = (m.content + (m.embeds[0]?.description || '')).toLowerCase();
-            if (
-                txt.includes('no pokémon') || txt.includes('no pokemon') ||
-                txt.includes('nothing to add') || txt.includes('added 0') ||
-                txt.includes("you don't have") || txt.includes('0 pokémon added')
-            ) {
-                done = true;
-                break;
-            }
+            const t = (m.content + (m.embeds[0]?.description || '')).toLowerCase();
+            if (t.includes('no pokémon') || t.includes('nothing to add') || t.includes('added 0') || t.includes("0 pokémon")) { done = true; break; }
         }
-
-        if (batchCount >= 60) done = true; // safety cap (600 pokemon)
+        if (batches >= 60) done = true;
     }
 
-    logEvent(`All Pokémon added (${batchCount} batches). Sending confirm...`, 'info');
-
-    // Step 4: Send "@Pokétwo confirm" — Pokétwo replies with a confirm button
+    logEvent('All added — confirming...', 'info');
     await sleep(1500);
     await channel.send(`<@716390085896962058> confirm`);
-
-    // Step 5: Wait for Pokétwo's confirm button message and click it
     let confirmed = false;
     try {
         await new Promise((resolve, reject) => {
-            const collector = new Discord.MessageCollector(channel, m => m.author.id === '716390085896962058', { time: 20000 });
-            collector.on('collect', async m => {
-                // Pokétwo sends a message with a confirm/✅ button
-                const hasButton = m.components && m.components.length > 0;
-                const txt = (m.content + (m.embeds[0]?.description || '')).toLowerCase();
-                if (hasButton || txt.includes('confirm') || txt.includes('are you sure')) {
-                    try {
-                        await m.clickButton();
-                        confirmed = true;
-                        logEvent('✅ Confirm button clicked!', 'success');
-                    } catch (e) {
-                        // Try clicking the first available button by label
+            const col = new Discord.MessageCollector(channel, m => m.author.id === '716390085896962058', { time: 20000 });
+            col.on('collect', async m => {
+                if ((m.components?.length > 0) || m.content.toLowerCase().includes('confirm')) {
+                    try { await m.clickButton(); confirmed = true; } catch (e) {
                         try {
-                            const btn = m.components[0]?.components?.find(c =>
-                                c.label?.toLowerCase().includes('confirm') || c.emoji?.name === '✅'
-                            );
-                            if (btn) await m.clickButton(btn.customId);
-                            confirmed = true;
-                        } catch (e2) {
-                            logEvent(`Button click error: ${e2}`, 'error');
-                        }
+                            const btn = m.components[0]?.components?.find(c => c.label?.toLowerCase().includes('confirm') || c.emoji?.name === '✅');
+                            if (btn) { await m.clickButton(btn.customId); confirmed = true; }
+                        } catch (_) {}
                     }
-                    collector.stop();
-                    resolve();
+                    col.stop(); resolve();
                 }
             });
-            collector.on('end', (_, reason) => {
-                if (reason !== 'user') reject(new Error('No confirm button appeared within 20s.'));
-            });
+            col.on('end', (_, r) => { if (r !== 'user') reject(new Error('No confirm button in 20s.')); });
         });
-    } catch (err) {
-        logEvent(`⚠️ Confirm step issue: ${err.message}`, 'warn');
-    }
+    } catch (e) { logEvent(`Confirm issue: ${e.message}`, 'warn'); }
 
-    // Step 6: Wait briefly and check for completion message
-    await sleep(3000);
-    const finalMsgs = await channel.messages.fetch({ limit: 5 });
-    const completedMsg = [...finalMsgs.values()].find(m =>
-        m.author.id === '716390085896962058' &&
-        (m.content.toLowerCase().includes('trade completed') ||
-         m.content.toLowerCase().includes('successfully traded') ||
-         (m.embeds[0]?.description || '').toLowerCase().includes('completed'))
-    );
-
-    if (completedMsg || confirmed) {
-        logEvent(`✅ Transfer to <@${targetId}> completed! (${batchCount} batches)`, 'success');
-        broadcast('transfer', { status: 'done', targetId, batches: batchCount });
-    } else {
-        logEvent(`⚠️ Transfer finished — verify in Discord.`, 'warn');
-        broadcast('transfer', { status: 'maybe_done', targetId, batches: batchCount });
-    }
-
+    if (confirmed) { logEvent(`✅ Transfer to ${targetId} done! (${batches} batches)`, 'success'); broadcast('transfer', { status: 'done', targetId, batches }); }
+    else { logEvent('Transfer finished — verify in Discord.', 'warn'); broadcast('transfer', { status: 'maybe_done', targetId, batches }); }
     transferActive = false;
-    transferChannelId = null;
 }
 
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+// ─── BOOST MODE ──────────────────────────────────────────────────────────────
+// Boost mode overrides humanDelay() with a very short window (300-800ms).
+// It also feeds into competitor tracker — if a competitor is detected and faster
+// than boost floor, boost automatically undercuts them.
+// Toggle from dashboard or via $boost command.
+let boostMode = false;
 
-//--------------------------------------------------------------//
+function getDelay() {
+    if (boostMode) {
+        // Boost: 300-800ms with session jitter baked in
+        const base = Math.floor(Math.random() * 500) + 300;
+        // If competitors known, undercut the fastest by 200ms
+        const allTimes = Object.values(competitors).map(c => c.fastest).filter(f => f < 9999);
+        if (allTimes.length > 0) {
+            const fastest = Math.min(...allTimes);
+            return Math.max(200, fastest - 200 + Math.floor(Math.random() * 100));
+        }
+        return base;
+    }
+    // Normal mode: gaussian 1-7s + session jitter
+    const r1 = Math.random(), r2 = Math.random();
+    const g  = Math.sqrt(-2 * Math.log(r1)) * Math.cos(2 * Math.PI * r2);
+    let ms   = Math.round(3000 + g * 1200 + SESSION_JITTER);
+    // Still undercut known competitors even in normal mode
+    const allTimes = Object.values(competitors).map(c => c.fastest).filter(f => f < 9999);
+    if (allTimes.length > 0) {
+        const fastest = Math.min(...allTimes);
+        ms = Math.min(ms, fastest - 300 + Math.floor(Math.random() * 150));
+    }
+    return Math.max(800, Math.min(7000, ms));
+}
 
-//------------------------- INCENSE MANAGER --------------------------------//
+// Override humanDelay to use getDelay
+function humanDelay() { return getDelay(); }
 
-// Tracks which incense channels currently have active incense
-const incenseActive = {}; // channelId -> true/false
 
-// Check a single incense channel by sending @Pokétwo incense and reading response
+// ─── INCENSE MANAGER ─────────────────────────────────────────────────────────
+// Key facts:
+//  - "@Pokétwo buy incense" must be sent IN the channel you want incense in
+//  - Costs 50 shards. To buy shards: "@Pokétwo buy shard 50" (costs 10,000 PC)
+//  - Spawns every 20s for 1 hour (180 spawns total)
+//  - Stop: "@Pokétwo stopincense"
+//  - Cannot stack in same channel. Can run multiple channels at once.
+const incenseActive = {}; // channelId → bool
+
 async function checkIncenseStatus(channel) {
     try {
         await channel.send(`<@716390085896962058> incense`);
-        await sleep(3000);
-        const msgs = await channel.messages.fetch({ limit: 5 });
+        await sleep(3500);
+        const msgs = await channel.messages.fetch({ limit: 8 });
         for (const [, m] of msgs) {
             if (m.author.id !== '716390085896962058') continue;
-            const txt = (m.content + (m.embeds[0]?.description || '') + (m.embeds[0]?.footer?.text || '')).toLowerCase();
-            if (txt.includes('active') || txt.includes('spawns remaining') || txt.includes('incense is active')) {
+            const txt = (m.content + (m.embeds[0]?.description || '') + (m.embeds[0]?.title || '')
+                       + (m.embeds[0]?.fields || []).map(f => f.name + f.value).join(' ')).toLowerCase();
+            if (txt.includes(`#${channel.id}`) || txt.includes(`<#${channel.id}>`) ||
+                (txt.includes('active') && txt.includes(channel.name?.toLowerCase()))) {
                 incenseActive[channel.id] = true;
-                logEvent(`Incense check #${channel.name}: ACTIVE ✅`, 'success');
+                logEvent(`Incense #${channel.name}: ACTIVE ✅`, 'success');
+                broadcast('incense', { channelId: channel.id, name: channel.name, active: true });
                 return true;
             }
-            if (txt.includes('no active') || txt.includes('not active') || txt.includes('you don') || txt.includes('inactive')) {
+            if (txt.includes('incense') || txt.includes('no active')) {
                 incenseActive[channel.id] = false;
-                logEvent(`Incense check #${channel.name}: inactive`, 'info');
+                logEvent(`Incense #${channel.name}: not active`, 'info');
+                broadcast('incense', { channelId: channel.id, name: channel.name, active: false });
                 return false;
             }
         }
-        // Couldn't determine — assume inactive to be safe
         incenseActive[channel.id] = false;
         return false;
     } catch (e) {
-        logEvent(`Incense check error on #${channel.name}: ${e}`, 'error');
+        logEvent(`Incense check error #${channel.name}: ${e}`, 'error');
         incenseActive[channel.id] = false;
         return false;
     }
 }
 
-// Buy shards then buy + use 2h incense in a channel
-async function buyAndUseIncense(channel) {
-    logEvent(`Buying 2h incense in #${channel.name}...`, 'info');
+async function buyIncense(channel) {
+    logEvent(`Buying incense in #${channel.name}... (costs 50 shards / 10,000 PC)`, 'info');
     try {
-        // Buy 2h incense (costs shards — item ID for 2h incense is "incense2")
-        await channel.send(`<@716390085896962058> buy incense2`);
-        await sleep(2500);
-        await channel.send(`<@716390085896962058> use incense`);
-        await sleep(2000);
+        // buy incense must be sent in the target channel — Pokétwo ties it to that channel
+        await channel.send(`<@716390085896962058> buy incense`);
+        // Wait for Pokétwo's confirm button and click it
+        await new Promise((resolve) => {
+            const col = new Discord.MessageCollector(channel, m => m.author.id === '716390085896962058', { time: 15000 });
+            col.on('collect', async m => {
+                if (m.components?.length > 0) {
+                    try { await m.clickButton(); } catch (_) {}
+                    col.stop(); resolve();
+                } else if (m.content.toLowerCase().includes('incense')) {
+                    col.stop(); resolve();
+                }
+            });
+            col.on('end', () => resolve());
+        });
+        await sleep(1500);
         incenseActive[channel.id] = true;
-        logEvent(`2h incense activated in #${channel.name} ✅`, 'success');
-        broadcast('log', { text: `🌿 2h incense activated in #${channel.name}`, level: 'success' });
+        logEvent(`Incense activated in #${channel.name} ✅`, 'success');
+        broadcast('incense', { channelId: channel.id, name: channel.name, active: true });
+        broadcast('log', { text: `🌿 Incense active in #${channel.name}`, level: 'success' });
     } catch (e) {
-        logEvent(`Failed to buy/use incense in #${channel.name}: ${e}`, 'error');
+        logEvent(`Failed to buy incense in #${channel.name}: ${e}`, 'error');
     }
 }
 
-// Farm shards in the spam channel before buying incense
-async function farmShards() {
-    const spamCh = client.channels.cache.get(config.spamChannelID);
-    if (!spamCh) return;
-    logEvent('Farming shards...', 'info');
-    try {
-        await spamCh.send(`<@716390085896962058> sh`); // check shard balance
-        await sleep(2000);
-    } catch (e) {
-        logEvent(`Shard farm error: ${e}`, 'error');
-    }
+async function buyShards(channel, amount = 50) {
+    // Buy shards with PC: 200 PC per shard. 50 shards = 10,000 PC
+    logEvent(`Buying ${amount} shards (costs ${amount * 200} PC)...`, 'info');
+    await channel.send(`<@716390085896962058> buy shard ${amount}`);
+    await sleep(2000);
 }
 
-// On boot: check each incense channel — skip active ones, buy for inactive ones
 async function initIncense(incenseChannels) {
-    logEvent('Checking incense status on all channels at startup...', 'info');
+    logEvent('Checking incense on all channels...', 'info');
     for (const ch of incenseChannels) {
         await sleep(1500);
         const active = await checkIncenseStatus(ch);
-        if (!active) {
-            await sleep(1000);
-            await buyAndUseIncense(ch);
-        }
+        if (!active) { await sleep(1000); await buyIncense(ch); }
     }
     logEvent('Incense init complete.', 'success');
 }
 
-// Every 2h: farm shards, then check each channel and rebuy where needed
-async function scheduledIncenseRefresh(incenseChannels) {
-    await farmShards();
-    await sleep(3000);
+async function refreshIncense(incenseChannels) {
     for (const ch of incenseChannels) {
         await sleep(1500);
         const active = await checkIncenseStatus(ch);
-        if (!active) {
-            await sleep(1000);
-            await buyAndUseIncense(ch);
-        } else {
-            logEvent(`Skipping #${ch.name} — incense still active`, 'info');
-        }
+        if (!active) { await sleep(1000); await buyIncense(ch); }
+        else logEvent(`Skipping #${ch.name} — incense still active`, 'info');
     }
 }
 
-// Spam a single incense channel continuously
 function startIncenseSpam(ch) {
-    function incenseSpam() {
-        if (isSleeping) { setTimeout(incenseSpam, 3000); return; }
-        // Only spam if incense is active in this channel
-        if (!incenseActive[ch.id]) { setTimeout(incenseSpam, 10000); return; }
-        const result = Math.random().toString(36).substring(2, 15);
-        ch.send(result + " ").catch(() => {});
-        const interval = Math.floor(Math.random() * 3000) + 2000; // 2-5s
-        setTimeout(incenseSpam, interval);
-    }
-    incenseSpam();
+    (function loop() {
+        if (isSleeping) { setTimeout(loop, 3000); return; }
+        if (!incenseActive[ch.id]) { setTimeout(loop, 10000); return; }
+        ch.send(Math.random().toString(36).substring(2, 15) + ' ').catch(() => {});
+        setTimeout(loop, Math.floor(Math.random() * 3000) + 2000);
+    })();
 }
 
-//--------------------------------------------------------------//
 
+// ─── ANTI-CRASH ──────────────────────────────────────────────────────────────
+process.on('unhandledRejection', (r) => {
+    if (String(r) !== 'Error: Unable to identify that pokemon.')
+        logEvent(`[antiCrash] Unhandled: ${r}`, 'error');
+});
+process.on('uncaughtException', (e) => logEvent(`[antiCrash] Exception: ${e}`, 'error'));
+
+// ─── READY ───────────────────────────────────────────────────────────────────
 client.on('ready', () => {
-    stats.username = client.user.username;
+    stats.username  = client.user.username;
     stats.botStatus = 'online';
+    logEvent(`${client.user.username} is ONLINE — session jitter: ${SESSION_JITTER > 0 ? '+' : ''}${SESSION_JITTER}ms`, 'success');
+    logEvent(`Boost mode: ${boostMode ? 'ON 🚀' : 'OFF'} | Catch mode: ${catchMode}`, 'info');
+    broadcast('status', { status: 'online', sleeping: false, username: client.user.username, boostMode });
 
-    logEvent(`Account: ${client.user.username} is ONLINE`, 'success');
-    logEvent('Autocatcher started and ready.', 'info');
-    broadcast('status', { status: 'online', sleeping: false, username: client.user.username });
+    // Main spam channel
+    const spamCh = client.channels.cache.get(config.spamChannelID);
+    if (spamCh) {
+        (function spam() {
+            if (!isSleeping) spamCh.send(Math.random().toString(36).substring(2, 15) + '(Made by 🔥⃤•AK_ØPᵈᵉᵛ✓#6326) ').catch(() => {});
+            setTimeout(spam, Math.floor(Math.random() * 3500) + 1500);
+        })();
+    }
 
-    const channel = client.channels.cache.get(config.spamChannelID);
-
-    // Resolve all incense channels (supports both old single ID and new array)
+    // Incense channels
     const incenseIDs = Array.isArray(config.incenseChannelIDs)
         ? config.incenseChannelIDs
         : (config.incenseChannelID ? [config.incenseChannelID] : []);
-    const incenseChannels = incenseIDs
-        .map(id => client.channels.cache.get(id))
-        .filter(Boolean);
-
-    function getRandomInterval(min, max) {
-        return Math.floor(Math.random() * (max - min + 1)) + min;
-    }
-
-    // Main spam channel
-    function spam() {
-        const result = Math.random().toString(36).substring(2, 15);
-        channel.send(result + "(Made by 🔥⃤•AK_ØPᵈᵉᵛ✓#6326) ");
-        const randomInterval = getRandomInterval(1500, 5000);
-        setTimeout(spam, randomInterval);
-    }
-    spam();
+    const incenseChannels = incenseIDs.map(id => client.channels.cache.get(id)).filter(Boolean);
 
     if (incenseChannels.length > 0) {
-        logEvent(`Found ${incenseChannels.length} incense channel(s). Initialising...`, 'info');
-
-        // Start spam loop for each incense channel
-        for (const ch of incenseChannels) {
-            incenseActive[ch.id] = false; // default until checked
-            startIncenseSpam(ch);
-        }
-
-        // Boot-up incense check — wait 5s for bot to fully settle first
-        setTimeout(() => initIncense(incenseChannels), 5000);
-
-        // Every 2 hours: farm shards + rebuy incense where needed
-        setInterval(() => scheduledIncenseRefresh(incenseChannels), 2 * 60 * 60 * 1000);
+        logEvent(`${incenseChannels.length} incense channel(s) found.`, 'info');
+        for (const ch of incenseChannels) { incenseActive[ch.id] = false; startIncenseSpam(ch); }
+        setTimeout(() => initIncense(incenseChannels), 6000);
+        setInterval(() => refreshIncense(incenseChannels), 60 * 60 * 1000); // check every hour
     }
 });
 
-//--------------------------------------------------------------//
 
-//------------------------- ANTI-CRASH --------------------------------//
-
-process.on("unhandledRejection", (reason, p) => {
-    if (reason == "Error: Unable to identify that pokemon.") {} else {
-        logEvent(`[antiCrash] Unhandled Rejection: ${reason}`, 'error');
-    }
-});
-process.on("uncaughtException", (err, origin) => {
-    logEvent(`[antiCrash] Uncaught Exception: ${err}`, 'error');
-});
-
-//--------------------------------------------------------------//
-
-//------------------------- AUTOCATCHER --------------------------------//
-
+// ─── AUTOCATCHER ─────────────────────────────────────────────────────────────
 client.on('messageCreate', async message => {
 
-    // Owner commands
-    if (message.content === "$captcha_completed" && message.author.id === config.OwnerID) {
-        isSleeping = false;
-        stats.botStatus = 'online';
+    // Competitor detection — watch for others catching
+    if (message.author.id !== client.user?.id &&
+        message.author.id !== '716390085896962058' &&
+        message.author.id !== config.OwnerID &&
+        /^<@716390085896962058>\s+c\s+\S+/i.test(message.content)) {
+        recordCompetitorCatch(message.author.id, message.author.username || message.author.id, message.channel.id);
+    }
+
+    // ── Owner commands ──
+    if (message.author.id !== config.OwnerID) {} // handled below
+    if (message.content === '$captcha_completed' && message.author.id === config.OwnerID) {
+        isSleeping = false; stats.botStatus = 'online';
         broadcast('status', { status: 'online', sleeping: false });
         broadcast('captcha_resolved', {});
-        message.channel.send("Autocatcher Started!");
-        logEvent('Captcha resolved via Discord command.', 'success');
+        message.channel.send('Autocatcher resumed!');
+        logEvent('Captcha resolved via Discord.', 'success');
+    }
+    if (message.content === '$boost' && message.author.id === config.OwnerID) {
+        boostMode = !boostMode;
+        message.channel.send(`🚀 Boost mode: **${boostMode ? 'ON' : 'OFF'}**`);
+        broadcast('boost', { active: boostMode });
+        logEvent(`Boost mode toggled: ${boostMode ? 'ON' : 'OFF'}`, 'warn');
+    }
+    if (message.content === '$help' && message.author.id === config.OwnerID) {
+        message.channel.send('```\nPoketwo-Autocatcher v1.6.0\n' +
+            '$captcha_completed — resume after captcha\n' +
+            '$boost             — toggle boost mode (fast catch)\n' +
+            '$say <text>        — send a message\n' +
+            '$react <msgID>     — react ✅\n' +
+            '$click <msgID>     — click ✅ button\n' +
+            '$transferall <uid> — bulk transfer all pokemon\n' +
+            '$help              — this message\n```');
+    }
+    if (message.content.startsWith('$say') && message.author.id === config.OwnerID) {
+        message.channel.send(message.content.split(' ').slice(1).join(' '));
+    }
+    if (message.content.startsWith('$react') && message.author.id === config.OwnerID) {
+        try {
+            const id = message.content.trim().split(/\s+/)[1];
+            const m  = await message.channel.messages.fetch(id);
+            m.react('✅'); message.react('✅');
+        } catch { message.react('❌'); }
+    }
+    if (message.content.startsWith('$click') && message.author.id === config.OwnerID) {
+        try {
+            const id = message.content.trim().split(/\s+/)[1];
+            const m  = await message.channel.messages.fetch(id);
+            await m.clickButton(); message.react('✅');
+        } catch { message.react('❌'); }
+    }
+    if (message.content.startsWith('$transferall') && message.author.id === config.OwnerID) {
+        const uid = message.content.trim().split(/\s+/)[1];
+        if (!uid) { message.channel.send('Usage: `$transferall <userID>`'); return; }
+        message.channel.send(`Starting transfer to <@${uid}> — they must accept the trade!`);
+        startTransfer(message.channel, uid);
     }
 
-    if (message.content === "$help" && message.author.id === config.OwnerID) {
-        await message.channel.send(
-            "``` Poketwo-Autocatcher\n Link: https://github.com/AkshatOP/Poketwo-Autocatcher\n\n $captcha_completed : Use to restart the bot once captcha is solved\n $say <content> : Make the bot say whatever you want\n $react <messageID> : React with ✅ emoji\n $click <messageID> : Clicks the button which has ✅ emoji\n $transferall <userID> : Transfer ALL your pokemon to the given user (they must accept the trade)\n $help : To show this message ```"
-        );
+    if (isSleeping) return;
+
+    // ── Pokétwo events ──
+    if (message.content.includes('Please tell us') && message.author.id === '716390085896962058') {
+        isSleeping = true; stats.botStatus = 'captcha'; stats.captchas++;
+        message.channel.send('Autocatcher paused — captcha detected! Type `$captcha_completed` once solved.');
+        logEvent('⚠️ CAPTCHA DETECTED', 'warn');
+        broadcast('captcha', { time: new Date().toLocaleTimeString() });
+        broadcast('status', { status: 'captcha', sleeping: true });
+        broadcast('stats', { caught: stats.caught, missed: stats.missed, captchas: stats.captchas, spawns: stats.spawns, pc: stats.pc });
+        setTimeout(() => { isSleeping = false; stats.botStatus = 'online'; broadcast('status', { status: 'online', sleeping: false }); logEvent('Auto-resumed (5h timeout).', 'info'); }, 18000000);
+        return;
     }
 
-    // $transferall <userID> — transfer all pokemon to a user via trade
-    if (message.content.startsWith("$transferall") && message.author.id === config.OwnerID) {
-        const args = message.content.trim().split(/\s+/);
-        const targetId = args[1];
-        if (!targetId) {
-            message.channel.send("Usage: `$transferall <userID>`");
-            return;
+    if (message.content === 'That is the wrong pokémon!' && message.author.id === '716390085896962058') {
+        stats.missed++;
+        const rate = stats.missed / (stats.caught + stats.missed);
+        if (rate > 0.4 && (stats.caught + stats.missed) > 10)
+            broadcast('warning', { type: 'miss_rate', msg: `⚠️ Miss rate ${Math.round(rate*100)}% — name detection may be off`, level: 'warn' });
+        logEvent('Wrong Pokémon — missed.', 'warn');
+        broadcast('stats', { caught: stats.caught, missed: stats.missed, captchas: stats.captchas, spawns: stats.spawns, pc: stats.pc });
+        if (catchMode === 'hint') message.channel.send(`<@716390085896962058> h`);
+        return;
+    }
+
+    // Incense spawn footer
+    if (message.author.id === '716390085896962058' && message?.embeds[0]?.footer?.text?.includes('Spawns Remaining')) {
+        if (catchMode === 'hint') message.channel.send(`<@716390085896962058> h`);
+        if (message.embeds[0].footer.text.includes('Spawns Remaining: 0')) {
+            incenseActive[message.channel.id] = false;
+            broadcast('incense', { channelId: message.channel.id, name: message.channel.name, active: false });
+            logEvent(`Incense ended in #${message.channel.name} — rebuying...`, 'warn');
+            await sleep(1000);
+            await buyIncense(message.channel);
         }
-        message.channel.send(`Starting transfer to <@${targetId}>. They need to accept the trade request!`);
-        startTransfer(message.channel, targetId);
+        return;
     }
 
-    if (!isSleeping) {
+    // Hint solve
+    if (catchMode === 'hint' && message.author.id === '716390085896962058' && message.content.includes('The pokémon is')) {
+        try {
+            const pokemon = await solveHint(message);
+            const name = pokemon[0];
+            doCatch(name, message.channel, message.guild?.name || '?', message.channel?.name || '?');
+        } catch (e) { logEvent(`Hint solve error: ${e}`, 'error'); }
+        return;
+    }
 
-        // Captcha detection
-        if (message.content.includes("Please tell us") && message.author.id === "716390085896962058") {
-            isSleeping = true;
-            stats.botStatus = 'captcha';
-            stats.captchas++;
-            message.channel.send("Autocatcher Stopped , Captcha Detected! Use `$captcha_completed` once the captcha is solved ");
-            logEvent('⚠️ CAPTCHA DETECTED! Autocatcher paused.', 'warn');
-            broadcast('captcha', { time: new Date().toLocaleTimeString() });
-            broadcast('status', { status: 'captcha', sleeping: true });
-            broadcast('stats', { caught: stats.caught, missed: stats.missed, captchas: stats.captchas });
-            setTimeout(async function () {
-                isSleeping = false;
-                stats.botStatus = 'online';
-                broadcast('status', { status: 'online', sleeping: false });
-                logEvent('Auto-resumed after 5 hour captcha timeout.', 'info');
-            }, 18000000);
+    // Poke-Name / Sierra bot spawn detection
+    const POKEBOTS = ['696161886734909481', '874910942490677270'];
+    if (!POKEBOTS.includes(message.author.id)) return;
 
-        } else if (message.content.startsWith("$say") && message.author.id == config.OwnerID) {
-            let say = message.content.split(" ").slice(1).join(" ");
-            message.channel.send(say);
+    if (catchMode === 'hint') {
+        await message.channel.send(`<@716390085896962058> h`);
+        return;
+    }
 
-        } else if (message.content.startsWith("$react") && message.author.id == config.OwnerID) {
-            let msg;
-            try {
-                const args = message.content.slice(1).trim().split(/ +/g);
-                msg = await message.channel.messages.fetch(args[1]);
-            } catch (err) {
-                message.reply(`Please Specify the message ID as an argument like "$react <messageID>"`);
-            }
-            if (msg) {
-                try { msg.react("✅"); message.react("✅"); }
-                catch (err) { message.react("❌"); logEvent(err, 'error'); }
-            }
+    // Direct mode — extract name from Poke-Name message
+    const name = extractPokemonName(message);
+    if (name) {
+        doCatch(name, message.channel, message.guild?.name || '?', message.channel?.name || '?');
+        return;
+    }
 
-        } else if (message.content.startsWith("$click") && message.author.id == config.OwnerID) {
-            let msg;
-            try {
-                var args = message.content.slice(1).trim().split(/ +/g);
-                msg = await message.channel.messages.fetch(args[1]);
-            } catch (err) {
-                message.reply(`Please Specify the message ID as an argument like "$click <messageID>".`);
-            }
-            if (msg) {
-                try { await msg.clickButton(); message.react("✅"); }
-                catch (err) { message.react("❌"); logEvent(err, 'error'); }
-            }
-
-        } else if (message.content == "That is the wrong pokémon!" && message.author.id == "716390085896962058") {
-            stats.missed++;
-            broadcast('stats', { caught: stats.caught, missed: stats.missed, captchas: stats.captchas });
-            logEvent('Wrong Pokémon sent — missed catch.', 'warn');
-            // In hint mode, re-request hint after wrong guess
-            if (catchMode === 'hint') {
-                message.channel.send(`<@716390085896962058> h`);
-            }
-
-        } else if (message.author.id == "716390085896962058") {
-            if (message?.embeds[0]?.footer?.text.includes("Spawns Remaining")) {
-                // In hint mode, request hint for incense spawns
-                if (catchMode === 'hint') {
-                    await message.channel.send(`<@716390085896962058> h`);
-                }
-                if ((message.embeds[0]?.footer?.text == "Incense: Active.\nSpawns Remaining: 0.")) {
-                    logEvent(`Incense ran out in #${message.channel.name} — rebuying...`, 'warn');
-                    incenseActive[message.channel.id] = false;
-                    const ch = message.channel;
-                    await sleep(1000);
-                    await buyAndUseIncense(ch);
-                }
-            } else if (message.content?.toLowerCase().includes('incense has ended') ||
-                       message.content?.toLowerCase().includes('your incense has run out')) {
-                logEvent(`Incense ended in #${message.channel.name} — rebuying...`, 'warn');
-                incenseActive[message.channel.id] = false;
-                await sleep(1000);
-                await buyAndUseIncense(message.channel);
-            } else if (catchMode === 'hint' && message.content.includes("The pokémon is")) {
-                // Hint mode: solve the hint from Pokétwo
-                try {
-                    const pokemon = await solveHint(message);
-                    const name = pokemon[0];
-                    const delay = humanDelay();
-                    logEvent(`[Hint] Solved hint: ${name} — queued (${delay / 1000}s delay)`, 'info');
-                    broadcast('spawn', { name, delay: delay / 1000, method: 'Hint', queueSize: catchQueue.length + 1 });
-
-                    const chan = message.channel;
-                    const guildName = message.guild?.name || '?';
-                    const chanName = message.channel?.name || '?';
-
-                    enqueueCatch(name, delay, async () => {
-                        logEvent(`[Hint] Catching ${name} now...`, 'info');
-                        await chan.send(`<@716390085896962058> c ${name}`)
-                            .catch(error => {
-                                logEvent(`Send error: ${error}`, 'error');
-                                client.channels.cache.get(config.errorChannelID)?.send(String(error));
-                            });
-
-                        const filter = (msg) => msg.author.id === "716390085896962058";
-                        const collector = new Discord.MessageCollector(chan, filter, { max: 1, time: 13000 });
-                        await new Promise(resolve => {
-                            collector.on('collect', async (collected) => {
-                                if (collected.content.includes("Congratulations")) {
-                                    let rareity;
-                                    try { rareity = await checkRarity(name); } catch { rareity = "Not Found in Database"; }
-                                    addCatch(name, rareity, guildName, chanName);
-                                    const logchannel = client.channels.cache.get(config.logChannelID);
-                                    logchannel?.send("[" + guildName + "/#" + chanName + "] " + "**__" + name + "__** " + "Rarity " + rareity)
-                                        .catch(error => {
-                                            logEvent(`Log error: ${error}`, 'error');
-                                            client.channels.cache.get(config.errorChannelID)?.send(String(error));
-                                        });
-                                    collector.stop();
-                                }
-                                resolve();
-                            });
-                            collector.on('end', () => resolve());
-                        });
-                    });
-                } catch (err) {
-                    logEvent(`[Hint] Failed to solve hint: ${err}`, 'error');
-                }
-            }
-
-        } else {
-
-            const Pokebots = ["696161886734909481", "874910942490677270"];
-            if (allowedChannels.length > 0 && !allowedChannels.includes(message.channel.id)) return;
-
-            if (Pokebots.includes(message.author.id)) {
-
-                // In hint mode with Poke-Name bot, request a hint instead of catching directly
-                if (catchMode === 'hint') {
-                    logEvent(`[Hint Mode] Poke-Name detected spawn, requesting hint...`, 'info');
-                    await message.channel.send(`<@716390085896962058> h`);
-                    return;
-                }
-
-                // Direct mode: extract name from Poke-Name (bot 874910942490677270) message or embed
-                const textName = extractPokemonName(message);
-
-                if (textName) {
-                    const name = textName;
-                    const delay = humanDelay();
-                    logEvent(`[Direct] Pokémon spawned: ${name} — queued (${delay / 1000}s delay, ${catchQueue.length} in queue)`, 'info');
-                    broadcast('spawn', { name, delay: delay / 1000, method: 'Direct', queueSize: catchQueue.length + 1 });
-
-                    const chan = message.channel;
-                    const guildName = message.guild?.name || '?';
-                    const chanName = message.channel?.name || '?';
-
-                    enqueueCatch(name, delay, async () => {
-                        logEvent(`[Poke-Name] Catching ${name} now...`, 'info');
-                        await chan.send(`<@716390085896962058> c ${name}`)
-                            .catch(error => {
-                                logEvent(`Send error: ${error}`, 'error');
-                                client.channels.cache.get(config.errorChannelID)?.send(String(error));
-                            });
-
-                        const filter = (msg) => msg.author.id === "716390085896962058";
-                        const collector = new Discord.MessageCollector(chan, filter, { max: 1, time: 13000 });
-                        await new Promise(resolve => {
-                            collector.on('collect', async (collected) => {
-                                if (collected.content.includes("Congratulations")) {
-                                    function capitalizeFirstLetter(str) {
-                                        return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
-                                    }
-                                    let rareity;
-                                    const name2 = capitalizeFirstLetter(name);
-                                    try { rareity = await checkRarity(`${name2}`); } catch { rareity = "Not Found in Database"; }
-                                    addCatch(name2, rareity, guildName, chanName);
-                                    const logchannel = client.channels.cache.get(config.logChannelID);
-                                    logchannel?.send("[" + guildName + "/#" + chanName + "] " + "**__" + name2 + "__** " + "Rarity " + rareity)
-                                        .catch(error => {
-                                            logEvent(`Log error: ${error}`, 'error');
-                                            client.channels.cache.get(config.errorChannelID)?.send(String(error));
-                                        });
-                                    collector.stop();
-                                }
-                                resolve();
-                            });
-                            collector.on('end', () => resolve());
-                        });
-                    });
-                    return;
-                }
-
-                // Fallback: OCR image embed
-                let preferredURL = null;
-                message.embeds.forEach((e) => {
-                    if (e.image) {
-                        const imageURL = e.image.url;
-                        if (imageURL.includes("prediction.png")) preferredURL = imageURL;
-                        else if (imageURL.includes("embed.png") && !preferredURL) preferredURL = imageURL;
-                    }
-                });
-
-                if (preferredURL) {
-                    try {
-                        const res1 = await ocrSpace(preferredURL, { apiKey: config.ocrSpaceApiKey });
-                        const name1 = res1.ParsedResults[0].ParsedText.split('\r')[0];
-                        const name5 = name1.replace(/Q/g, 'R');
-                        const name = findOutput(name5);
-                        const delay = humanDelay();
-                        logEvent(`[OCR] Pokémon spawned: ${name} — queued (${delay / 1000}s delay, ${catchQueue.length} in queue)`, 'info');
-                        broadcast('spawn', { name, delay: delay / 1000, method: 'OCR', queueSize: catchQueue.length + 1 });
-
-                        const chan = message.channel;
-                        const guildName = message.guild?.name || '?';
-                        const chanName = message.channel?.name || '?';
-
-                        enqueueCatch(name, delay, async () => {
-                            logEvent(`[OCR] Catching ${name} now...`, 'info');
-                            await chan.send(`<@716390085896962058> c ${name}`)
-                                .catch(error => {
-                                    logEvent(`Send error: ${error}`, 'error');
-                                    client.channels.cache.get(config.errorChannelID)?.send(String(error));
-                                });
-
-                            const filter = (msg) => msg.author.id === "716390085896962058";
-                            const collector = new Discord.MessageCollector(chan, filter, { max: 1, time: 13000 });
-                            await new Promise(resolve => {
-                                collector.on('collect', async (collected) => {
-                                    if (collected.content.includes("Congratulations")) {
-                                        function capitalizeFirstLetter(str) {
-                                            return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
-                                        }
-                                        let rareity;
-                                        const name2 = capitalizeFirstLetter(name);
-                                        try { rareity = await checkRarity(`${name2}`); } catch { rareity = "Not Found in Database"; }
-                                        addCatch(name2, rareity, guildName, chanName);
-                                        const logchannel = client.channels.cache.get(config.logChannelID);
-                                        logchannel?.send("[" + guildName + "/#" + chanName + "] " + "**__" + name2 + "__** " + "Rarity " + rareity)
-                                            .catch(error => {
-                                                logEvent(`Log error: ${error}`, 'error');
-                                                client.channels.cache.get(config.errorChannelID)?.send(String(error));
-                                            });
-                                        collector.stop();
-                                    }
-                                    resolve();
-                                });
-                                collector.on('end', () => resolve());
-                            });
-                        });
-                    } catch (error) {
-                        logEvent(`OCR error: ${error}`, 'error');
-                        client.channels.cache.get(config.errorChannelID)?.send(String(error));
-                    }
-                }
-            }
+    // OCR fallback for image embeds (incense channels without Poke-Name)
+    let imgURL = null;
+    for (const e of message.embeds) {
+        if (e.image?.url?.includes('prediction.png')) { imgURL = e.image.url; break; }
+        if (e.image?.url?.includes('embed.png') && !imgURL) imgURL = e.image.url;
+    }
+    if (imgURL) {
+        try {
+            const res  = await ocrSpace(imgURL, { apiKey: config.ocrSpaceApiKey });
+            const raw  = res.ParsedResults[0].ParsedText.split('\r')[0].replace(/Q/g, 'R');
+            const ocrName = findOutput(raw);
+            if (ocrName) doCatch(ocrName, message.channel, message.guild?.name || '?', message.channel?.name || '?');
+        } catch (e) {
+            logEvent(`OCR error: ${e}`, 'error');
+            client.channels.cache.get(config.errorChannelID)?.send(String(e));
         }
     }
 });
