@@ -6,7 +6,7 @@
 
 Real-time dashboard · Anti-detection · Boost mode · Incense manager · Competitor tracker · PC/Quest tracking
 
-[![Version](https://img.shields.io/badge/version-v1.6.0-6366f1?style=for-the-badge)](https://github.com/yatharthsinghgavel/poki-poki-pokitwo/releases)
+[![Version](https://img.shields.io/badge/version-v1.6.3-6366f1?style=for-the-badge)](https://github.com/yatharthsinghgavel/poki-poki-pokitwo/releases)
 [![Node](https://img.shields.io/badge/node-v16+-10b981?style=for-the-badge&logo=node.js)](https://nodejs.org)
 [![License](https://img.shields.io/badge/license-MIT-f59e0b?style=for-the-badge)](LICENSE)
 
@@ -66,36 +66,48 @@ Everything is controlled from a **live web dashboard** at `http://localhost:3000
 
 > Open at `http://localhost:3000` — updates live via WebSocket, no refresh needed.
 
+The dashboard is a **Bento-grid UI** — each section is an independent frosted-glass module on a near-black background. Everything updates in real time; no page reloads required.
+
 ### Header
 | Element | Description |
 |---|---|
-| ⚡ Direct Catch / 💡 Hint Catch | Toggle catch mode — Direct uses Poke-Name, Hint solves Pokétwo's hint |
-| 🔔 Captcha Alert toggle | Enable/disable audio alarm when a captcha is detected. Click **🔊 Test** next to it to preview the sound. |
+| ⚡ Direct / 💡 Hint | Toggle catch mode — Direct reads name from Poke-Name, Hint solves Pokétwo's hint algorithmically |
+| 🔔 Captcha Alert toggle | Enable/disable audio alarm on captcha detection. Hit **🔊 Test** to preview |
 | Status badge | 🟢 Active / ⏸ Paused / 🔴 Captcha / ⚫ Offline |
 
-### Stat Cards (top row)
+### Stat Cards (row 1 — session totals)
 | Card | What it shows |
 |---|---|
 | Caught | Total Pokémon caught this session |
 | Missed | Wrong guesses / failed catches |
 | Spawns Seen | Total spawns detected |
-| Captchas | Number of captchas hit |
-| Anti-Detection | Current delay mode (1s–7s normal / boost) |
-| Est. PC Earned | Estimated Pokécoins earned from milestones |
-| Quest Progress | % toward next quest milestone + PC reward |
-| Incense Channels | 🟢/⚪ live status pill for each incense channel |
+| Captchas | Number of captchas encountered |
+| Est. PC Earned | Estimated Pokécoins earned from catch milestones |
 
-### Live Ticker
-Shows each Pokémon the instant it's detected — name, detection method (Direct/Hint/OCR), and anti-detection delay assigned.
+### Rate Cards (row 2 — rolling rates)
+Six compact cards: Pokémon/min · Pokémon/hr · PC/min · PC/hr · Avg/min · Avg/hr
+
+### Catch Efficiency Module
+SVG donut ring showing live catch-rate percentage. Ring colour shifts green → amber → red. Displays caught / missed counts and current anti-detection delay range alongside account name and uptime.
+
+### Quest & Incense Module
+- Animated progress bar for current quest milestone with PC reward preview
+- Pill badges showing live incense status (🟢 active / ⚪ inactive) for every configured channel
+
+### Live Radar
+Full-width bar showing the last detected spawn (name, detection method, assigned delay) and the current anti-collision queue depth.
+
+### Performance Chart
+Single dual-axis line graph — **Pokémon/min** (amber, left axis) vs **PC/min** (purple, right axis) over a 60-minute rolling window. One canvas, minimal memory footprint.
 
 ### Panels
 | Panel | Description |
 |---|---|
-| Recent Catches | Live list — name, rarity, server, channel, time |
-| Live Event Log | Full real-time log of every bot action. Colour coded: green=success, yellow=warn, red=error |
-| Bot Controls | Pause/Resume, 🚀 Boost mode toggle, ✅ Mark Captcha Solved, 🗑 Clear Catches, uptime |
-| ⚡ Competitor Tracker | Table of detected competitors with fastest catch time, average, sample count. Shows your current auto-adjusted delay ceiling |
-| 🛡️ Warnings & Health | Live warning pills — miss rate alerts, high catch rate, milestones. Auto-dismiss after 30s |
+| Recent Catches | Live prepend list — name, rarity, server, channel, time. Capped at 50 entries |
+| Live Event Log | Full real-time log of every bot action, colour-coded. Capped at 50 entries |
+| Bot Controls | Pause/Resume, 🚀 Boost toggle, ✅ Mark Captcha Solved, 🗑 Clear Catches, uptime |
+| ⚡ Competitor Tracker | Sorted table of detected competitors — fastest catch time, average, samples. Shows your auto-adjusted delay ceiling |
+| 🛡️ Warnings & Health | Live warning pills — miss rate alerts, milestones. Auto-dismiss after 30 s |
 | Bulk Transfer | Enter target User ID + channel ID → bulk trade all Pokémon automatically |
 
 ---
@@ -219,6 +231,8 @@ For maximum catching with incense:
 
 | Version | Changes |
 |---|---|
+| **v1.6.3** | Complete dashboard UI overhaul — Bento-grid layout, frosted-glass modules, single master dual-axis chart (replaces 5 canvases), DOM hard-capped at 50 items for catches and log, all DOM refs cached, catch efficiency ring, quest progress bar, incense chip badges. Target: < 150 MB RAM |
+| **v1.6.2** | Live rate cards (Poke/min, Poke/hr, PC/min, PC/hr, Avg/min, Avg/hr), 60-min history snapshots, charts panel on main page |
 | **v1.6.1** | Custom alarm sound support, 🔊 Test button in dashboard, alarm.mp3 included in repo, browser autoplay policy fix |
 | **v1.6.0** | Full overhaul — gaussian anti-detection delay, boost mode, smart 3-slot queue, competitor tracker with auto-undercut, PC & quest tracker, incense manager (4 channels, correct commands, confirm click), warnings panel, `$boost` command |
 | v1.5.2 | Multi-incense channel support (up to 4), hourly refresh, auto-rebuy |

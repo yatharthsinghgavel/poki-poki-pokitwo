@@ -4,6 +4,37 @@ All notable changes to Poketwo Autocatcher are documented here.
 
 ---
 
+## [v1.6.3] — Bento UI Redesign & Performance Overhaul
+
+### Dashboard — Complete Rewrite (`dashboard/index.html`)
+
+**Visual redesign — Bento-box minimalism**
+- Full layout rebuilt as a CSS Grid "Bento-box" — distinct frosted-glass modules with `backdrop-filter: blur(16px)`, rounded corners, and subtle borders
+- New background: near-black `#09090b` with dual radial-gradient accent halos (indigo top-left, green bottom-right) fixed to the viewport
+- All typography still Outfit (headings/values) + JetBrains Mono (timestamps/code), but hierarchy tightened: large font-weight-800 values, tiny uppercase muted labels
+- Responsive: stacks cleanly to 2-column at 1100 px, single column at 700 px
+
+**Memory & performance — target: < 150 MB RAM**
+- **Single master chart**: replaced 5 separate Chart.js canvas contexts with one dual-axis line graph (Pokémon/min left axis, PC/min right axis). Eliminates ~4 canvas allocations and their gradient buffers
+- **DOM element pooling**: `Recent Catches` and `Live Event Log` both hard-capped at **50 items**; oldest entry removed via `.removeChild(lastChild)` on every insert — no unbounded growth
+- **Cached DOM refs**: all frequently-updated elements stored as `const` references at startup (`elCaught`, `elPpm`, `elLog`, etc.) — zero `getElementById` calls in the hot path
+- `.innerHTML` avoided for all repeated updates; only `.textContent` and targeted `prepend/appendChild` used in the WebSocket message handler
+
+**New UI components**
+- **Catch Efficiency ring**: SVG donut arc that animates to the live catch-rate percentage; colour shifts green → amber → red based on threshold
+- **Quest progress bar**: CSS progress bar under the quest percentage, updates live from `quest` events
+- **Incense channel chips**: inline pill badges (🟢 on / ⚪ off) per channel inside the Quest & Incense module
+- **Live Radar bar**: full-width strip showing the last spawn name, detection method badge, and anti-detection delay alongside the queue counter
+- **Rate mini-cards row**: 6 compact rate cards (Poke/min, Poke/hr, PC/min, PC/hr, Avg/min, Avg/hr) in a dedicated row above the chart
+- Competitor tracker rebuilt as a clean sorted table inside its own bento module
+- Warnings panel retains auto-dismiss pills (30 s timeout)
+
+**Bug fixes carried forward**
+- Chart history no longer lost if `init` fires before DOM is ready — `applyHistory()` is called directly from the `init` handler, charts are initialised synchronously on page load
+- Audio unlock on first user interaction preserved (browser autoplay policy)
+
+---
+
 ## [v1.6.2] — Live stats, rate tracking & Stats window
 - **Pokémon / min & / hour**: rolling 60-second and 60-minute catch rate shown on the main dashboard
 - **PC / min & / hour**: rolling pokécoin earn rate for both 1-minute and 1-hour windows
