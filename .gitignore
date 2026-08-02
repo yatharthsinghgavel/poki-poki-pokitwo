@@ -17,4 +17,4 @@ Thumbs.db
 .env.*
 
 # Personal alarm sound — users provide their own (see README Custom Alarm Sound section)
-dashboard/alarm.mp3
+# dashboard/alarm.mp3 — uncomment to exclude your personal alarm from git
