@@ -4,24 +4,37 @@ All notable changes to Poketwo Autocatcher are documented here.
 
 ---
 
-## [v1.6.4] — Catch Speed Tray (Slow / Normal / Quick / Instant)
+## [v1.6.4] — Catch Speed Modes, Liquid Glass Theme & Dynamic Incense Manager
 
-### New Feature — 4-way Catch Speed selector
-- Replaced the old flat "Boost: ON/OFF" button and "Instant: ON/OFF" toggle with a **popover tray** in Bot Controls
-- Click the speed button → 4 options pop up above it, click one → tray closes and mode activates
-- Trigger button border and label update live to reflect the active mode
+### Catch Speed — 4-way selector
+Replaced the old Boost ON/OFF toggle with a row of **4 dedicated speed buttons** in Bot Controls:
 
-| Mode | Delay | Queue | Notes |
+| Mode | Delay | Queue | Use case |
 |---|---|---|---|
-| 🐢 Slow | 8–20 s gaussian | ✅ | Maximum stealth — ideal for long sessions |
-| 🛡️ Normal | 1–7 s gaussian | ✅ | Default — safest for public servers |
-| 🚀 Quick | 300–800 ms | ✅ | Competitor-aware undercut (old Boost mode) |
-| ⚡ Instant | 0 ms | ❌ bypassed | No delay — high ban risk, private only |
+| 🐢 Slow | 8–20 s gaussian | ✅ | Overnight sessions, maximum stealth |
+| 🛡️ Normal | 1–7 s gaussian | ✅ | Default — safe for public servers |
+| 🚀 Quick | 300–800 ms | ✅ | Competitive servers, competitor-aware undercut |
+| ⚡ Instant | 0 ms | ❌ bypassed | Private incense servers only — high ban risk |
 
-- Anti-Detection card on the dashboard updates its delay range and sub-label live
-- Warning pill fires in Warnings & Health panel when Quick or Instant is active
-- `$speed slow|normal|quick|instant` Discord command updated to include `slow`
-- `$boost` Discord command still works — toggles Normal ↔ Quick
+- `$boost` Discord command still works (toggles Normal ↔ Quick)
+- New `$speed slow|normal|quick|instant` Discord command for direct control
+- Active button highlights in its own colour; Anti-Detection card updates live
+
+### Liquid Glass Theme
+- **🪟 Glass** toggle button added to the top-left header (next to the version tag)
+- Click once → `🔮 Glass: ON` — all bento modules get Apple-inspired Liquid Glass effect (SVG turbulence displacement, frosted backdrop blur, inset shimmer borders)
+- Click again → reverts to default dark bento theme
+- Preference persists across refreshes via `localStorage`
+- Glass CSS/SVG lazily injected on first activation — zero overhead when unused
+- Powered by [Mael-667/Liquid-Glass-CSS](https://github.com/Mael-667/Liquid-Glass-CSS) (MIT)
+
+### Dynamic Incense Channel Manager
+- Incense section in the Quest & Incense module is now a **live manager**
+- Each channel shows as a row with its live 🟢/⚪ status and a **✕ remove** button
+- A Channel ID input + **➕ Add** button is always visible below the list
+- Adding a channel: validates it, starts incense spam, checks/buys incense immediately, no restart needed
+- Removing a channel: stops tracking it instantly
+- **Both operations persist to `config.json`** — survive bot restarts
 
 ---
 
