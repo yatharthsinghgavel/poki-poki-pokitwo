@@ -189,6 +189,7 @@ Releases are tagged on GitHub (e.g. `v1.3.0`, `v1.4.0`). Check the [Releases](..
 
 | Version | Changes |
 |---|---|
+| v1.4.1 | Incense channel support — separate spam + catch channel for incense, auto-rebuy and re-use when incense runs out |
 | v1.4.0 | Web dashboard, WebSocket events, pause/resume, bulk transfer, captcha audio alert |
 | v1.3.2 | Fixed Poke-Name `## PokemonName` message format detection |
 | v1.3.0 | Initial open-source release |

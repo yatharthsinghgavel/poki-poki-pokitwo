@@ -288,11 +288,13 @@ client.on('ready', () => {
     broadcast('status', { status: 'online', sleeping: false, username: client.user.username });
 
     const channel = client.channels.cache.get(config.spamChannelID);
+    const incenseChannel = config.incenseChannelID ? client.channels.cache.get(config.incenseChannelID) : null;
 
     function getRandomInterval(min, max) {
         return Math.floor(Math.random() * (max - min + 1)) + min;
     }
 
+    // Spam in the main spam channel (generates spawns + XP)
     function spam() {
         const result = Math.random().toString(36).substring(2, 15);
         channel.send(result + "(Made by 🔥⃤•AK_ØPᵈᵉᵛ✓#6326) ");
@@ -300,6 +302,19 @@ client.on('ready', () => {
         setTimeout(spam, randomInterval);
     }
     spam();
+
+    // Also spam in the incense channel to trigger incense spawns
+    if (incenseChannel) {
+        logEvent(`Incense channel active: #${incenseChannel.name}`, 'info');
+        function incenseSpam() {
+            if (isSleeping) { setTimeout(incenseSpam, 3000); return; }
+            const result = Math.random().toString(36).substring(2, 15);
+            incenseChannel.send(result + " ");
+            const randomInterval = getRandomInterval(2000, 5000);
+            setTimeout(incenseSpam, randomInterval);
+        }
+        incenseSpam();
+    }
 });
 
 //--------------------------------------------------------------//
@@ -408,7 +423,10 @@ client.on('messageCreate', async message => {
             if (message?.embeds[0]?.footer?.text.includes("Spawns Remaining")) {
                 await message.channel.send(`<@716390085896962058> h`);
                 if ((message.embeds[0]?.footer?.text == "Incense: Active.\nSpawns Remaining: 0.")) {
+                    logEvent('Incense ran out — rebuying...', 'warn');
                     message.channel.send(`<@716390085896962058> buy incense`);
+                    await sleep(2000);
+                    message.channel.send(`<@716390085896962058> use incense`);
                 }
             } else if (message.content.includes("The pokémon is")) {
                 let rarity;
@@ -425,6 +443,10 @@ client.on('messageCreate', async message => {
 
             const Pokebots = ["696161886734909481", "874910942490677270"];
             if (allowedChannels.length > 0 && !allowedChannels.includes(message.channel.id)) return;
+
+            // Also allow incense channel catches even if allowedChannels is set
+            const isIncenseChannel = config.incenseChannelID && message.channel.id === config.incenseChannelID;
+            if (allowedChannels.length > 0 && !allowedChannels.includes(message.channel.id) && !isIncenseChannel) return;
 
             if (Pokebots.includes(message.author.id)) {
 

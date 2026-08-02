@@ -1,6 +1,7 @@
 {
   "ocrSpaceApiKey": "YOUR_OCR_SPACE_API_KEY",
   "spamChannelID": "YOUR_SPAM_CHANNEL_ID",
+  "incenseChannelID": "YOUR_INCENSE_CHANNEL_ID",
   "logChannelID": "YOUR_LOG_CHANNEL_ID",
   "errorChannelID": "YOUR_ERROR_CHANNEL_ID",
   "OwnerID": "YOUR_DISCORD_USER_ID",
