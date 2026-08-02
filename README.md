@@ -195,7 +195,7 @@ Useful commands and facts for managing your account:
 | `@Pokétwo start` | Pick your starter (required before catching) |
 | `@Pokétwo c <name>` | Catch a spawned Pokémon |
 | `@Pokétwo h` | Get a hint for the current spawn |
-| `@Pokétwo buy incense` | Buy incense in the current channel (50 shards) |
+| `@Pokétwo incense buy` | Buy incense in the current channel (50 shards) |
 | `@Pokétwo stopincense` | Permanently stop active incense in this channel |
 | `@Pokétwo buy shard <n>` | Buy shards with PC (200 PC per shard) |
 | `@Pokétwo redirect #channel` | Force natural spawns to a specific channel |

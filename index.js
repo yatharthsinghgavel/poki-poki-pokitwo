@@ -6,7 +6,7 @@
  * Repo: https://github.com/yatharthsinghgavel/poki-poki-pokitwo
  *
  * KEY FACTS (researched from official docs):
- *  - Incense: costs 50 shards (=10,000 PC). Buy with "@Pokétwo buy incense" IN the target channel.
+ *  - Incense: costs 50 shards (=10,000 PC). Buy with "@Pokétwo incense buy" IN the target channel.
  *    Spawns 1 pokemon every 20s for 1 hour (180 total). Stop with "@Pokétwo stopincense".
  *  - Shards: premium currency. Buy with "@Pokétwo buy shard <n>" (200 PC each), or real money.
  *  - Spawn rate: 1 spawn per 24 messages. 1 user @ 1msg/1.5s = spawn every 36s.
@@ -496,7 +496,7 @@ function humanDelay() { return getDelay(); }
 
 // ─── INCENSE MANAGER ─────────────────────────────────────────────────────────
 // Key facts:
-//  - "@Pokétwo buy incense" must be sent IN the channel you want incense in
+//  - "@Pokétwo incense buy" must be sent IN the channel you want incense in
 //  - Costs 50 shards. To buy shards: "@Pokétwo buy shard 50" (costs 10,000 PC)
 //  - Spawns every 20s for 1 hour (180 spawns total)
 //  - Stop: "@Pokétwo stopincense"
@@ -539,7 +539,8 @@ async function buyIncense(channel) {
     logEvent(`Buying incense in #${channel.name}... (costs 50 shards / 10,000 PC)`, 'info');
     try {
         // buy incense must be sent in the target channel — Pokétwo ties it to that channel
-        await channel.send(`<@716390085896962058> buy incense`);
+        // Command migrated: old "buy incense" → new "incense buy"
+        await channel.send(`<@716390085896962058> incense buy`);
         // Wait for Pokétwo's confirm button and click it
         await new Promise((resolve) => {
             const col = new Discord.MessageCollector(channel, m => m.author.id === '716390085896962058', { time: 15000 });
