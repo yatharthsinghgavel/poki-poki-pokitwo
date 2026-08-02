@@ -132,6 +132,7 @@ You can also trigger this from the **Bulk Transfer** panel in the dashboard.
 
 | Version | Changes |
 |---|---|
+| v1.5.1 | Incense channel support — separate spam + catch channel for incense, auto-rebuy and re-use when incense runs out |
 | v1.5.0 | Added Direct Catching as default, 1-7s anti-detection human delay, anti-collision catch queue, Catch Mode Toggle on dashboard, and modernized glassmorphism UI |
 | v1.4.0 | Web dashboard, WebSocket events, pause/resume, bulk transfer, captcha audio alert |
 | v1.3.2 | Fixed Poke-Name `## PokemonName` message format detection |
