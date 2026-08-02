@@ -624,6 +624,7 @@ body.glass-mode .mod > * { position: relative; z-index: 12; }
         </div>
         <div style="display:flex;gap:8px;">
           <button class="btn btn-primary" style="height:38px;" onclick="saveCaptchaAlert()">💾 Save</button>
+          <button class="btn btn-ghost"   style="height:38px;" onclick="testCaptchaAlert()">🧪 Test</button>
           <button class="btn btn-ghost"   style="height:38px;" onclick="clearCaptchaAlert()">✕ Clear</button>
         </div>
       </div>
@@ -768,6 +769,7 @@ function dispatch(msg) {
     case 'incense':          applyIncense(msg.data);           break;
     case 'incense_removed':  removeIncenseChip(msg.data.channelId); break;
     case 'captcha_alert_saved': applyCaptchaAlertStatus(msg.data); break;
+    case 'captcha_alert_test':  setCatStatus(msg.data.ok ? '✅ Test message sent!' : `❌ Test failed: ${msg.data.error}`, msg.data.ok ? 'var(--green)' : 'var(--red)'); break;
     case 'competitor':       applyCompetitor(msg.data);        break;
     case 'warning':          showWarning(msg.data.type, msg.data.msg, msg.data.level); break;
     case 'transfer':         handleTransfer(msg.data);         break;
@@ -1159,6 +1161,13 @@ function saveCaptchaAlert() {
   const id = E('cat-id-input')?.value.trim();
   if (!id) { setCatStatus('⚠️ Enter an ID first.', 'var(--amber)'); return; }
   send({ type: 'set_captcha_alert', data: { type: selectedCapType, id } });
+}
+
+function testCaptchaAlert() {
+  const id = E('cat-id-input')?.value.trim();
+  if (!id) { setCatStatus('⚠️ Save a target first before testing.', 'var(--amber)'); return; }
+  setCatStatus('⏳ Sending test message…', 'var(--muted)');
+  send({ type: 'test_captcha_alert' });
 }
 
 function clearCaptchaAlert() {

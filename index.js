@@ -356,6 +356,15 @@ wss.on('connection', ws => {
                 if (!ch) { broadcast('log', { text: `❌ Channel ${channelId} not found.`, level: 'error' }); return; }
                 startTransfer(ch, targetId);
             }
+            if (msg.type === 'test_captcha_alert') {
+                if (!captchaAlertTarget?.id) {
+                    ws.send(JSON.stringify({ type: 'captcha_alert_test', data: { ok: false, error: 'No target configured — save one first.' } }));
+                } else {
+                    forwardCaptchaAlert('TEST — ' + new Date().toLocaleTimeString())
+                        .then(() => ws.send(JSON.stringify({ type: 'captcha_alert_test', data: { ok: true } })))
+                        .catch(e => ws.send(JSON.stringify({ type: 'captcha_alert_test', data: { ok: false, error: String(e) } })));
+                }
+            }
             if (msg.type === 'set_captcha_alert') {
                 const { type, id } = msg.data || {};
                 if (id && ['channel','dm','group'].includes(type)) {
