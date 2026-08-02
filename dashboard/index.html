@@ -589,6 +589,7 @@ body.glass-mode .mod > * { position: relative; z-index: 12; }
       <button class="spd-btn spd-quick"   id="spd-quick"   onclick="setCatchSpeed('quick')">🚀 Quick</button>
       <button class="spd-btn spd-instant" id="spd-instant" onclick="setCatchSpeed('instant')">⚡ Instant</button>
     </div>
+    <div id="spd-status" style="display:none;padding:8px 18px 14px;"></div>
   </div>
 
   <!-- ── COMPETITOR TRACKER ── -->
@@ -934,10 +935,10 @@ function removeIncenseChannel(channelId) {
 
 // ── CATCH SPEED ───────────────────────────────────────────────────────────────
 const SPD_META = {
-  slow:    { delayTxt:'8s\u201320s',    sub:'Max stealth',          warn:null },
-  normal:  { delayTxt:'1s\u20137s',     sub:'Gaussian anti-detect', warn:null },
-  quick:   { delayTxt:'300\u2013800ms', sub:'Competitor-aware',     warn:'🚀 Quick mode ON — 300–800ms, no stealth guarantee.' },
-  instant: { delayTxt:'0ms (bypass)',   sub:'No delay',             warn:'⚡ Instant mode ON — no anti-detection delay! High ban risk.' },
+  slow:    { delayTxt:'8s\u201320s',    sub:'Max stealth'          },
+  normal:  { delayTxt:'1s\u20137s',     sub:'Gaussian anti-detect' },
+  quick:   { delayTxt:'300\u2013800ms', sub:'Competitor-aware'     },
+  instant: { delayTxt:'0ms (bypass)',   sub:'No delay'             },
 };
 
 function setCatchSpeed(speed) {
@@ -954,7 +955,23 @@ function applyCatchSpeed(speed) {
   if (elAdval) elAdval.textContent = m.delayTxt;
   if (elDelay) elDelay.textContent = m.delayTxt;
   if (elAdsub) elAdsub.textContent = `${m.sub} \u00B7 ${speed.charAt(0).toUpperCase()+speed.slice(1)} mode`;
-  if (m.warn) showWarning('catch_speed', m.warn, speed === 'instant' ? 'error' : 'warn');
+
+  // update persistent speed status banner in Bot Controls
+  const banner = E('spd-status');
+  if (banner) {
+    if (speed === 'normal' || speed === 'slow') {
+      banner.style.display = 'none';
+      banner.innerHTML = '';
+    } else {
+      const cfg = {
+        quick:   { bg:'rgba(245,158,11,.1)',  border:'rgba(245,158,11,.3)',  color:'#f59e0b', icon:'🚀', text:'Quick mode active — 300–800ms delay. Competitor-aware but not fully stealthy.' },
+        instant: { bg:'rgba(239,68,68,.1)',   border:'rgba(239,68,68,.3)',   color:'#ef4444', icon:'⚡', text:'Instant mode active — no delay, no queue. Only safe in private incense servers.' },
+      };
+      const c = cfg[speed];
+      banner.style.display = 'block';
+      banner.innerHTML = `<div style="display:inline-flex;align-items:center;gap:8px;padding:7px 14px;border-radius:9px;font-size:.78rem;font-weight:600;background:${c.bg};border:1px solid ${c.border};color:${c.color};">${c.icon} ${c.text}</div>`;
+    }
+  }
 }
 
 // legacy shims
@@ -996,7 +1013,14 @@ function applyCompetitor(d) {
 
 <script>
 // ── WARNINGS ─────────────────────────────────────────────────────────────────
+// Only for real health issues: high miss rate, captcha, connection problems.
+// Speed mode and milestones do NOT use this — they have dedicated UI.
 function showWarning(id, msg, level = 'warn') {
+  // milestones never go to the warnings panel
+  if (id.startsWith('mile_')) { addLog(msg, 'success'); return; }
+  // speed mode warnings are handled by the speed status banner, not here
+  if (id === 'catch_speed') return;
+
   const colors = {
     warn:   ['rgba(245,158,11,.12)','rgba(245,158,11,.35)','#f59e0b'],
     error:  ['rgba(239,68,68,.12)', 'rgba(239,68,68,.35)', '#ef4444'],
