@@ -326,38 +326,20 @@ input:checked+.sw-track::before{transform:translateX(17px);}
   .grid{padding:12px 12px 32px;}
 }
 
-/* ── SPEED TRAY ── */
-.spd-tray-wrap { position:relative; display:inline-flex; align-self:center; }
-.spd-trigger {
-  display:inline-flex; align-items:center; gap:7px;
-  padding:9px 16px; border-radius:9px; border:1px solid var(--border);
-  background:rgba(255,255,255,.06); color:var(--text);
-  font-size:.84rem; font-weight:600; cursor:pointer;
-  font-family:'Outfit',sans-serif; transition:all .2s; user-select:none;
+/* ── SPEED BUTTONS ── */
+.spd-btn {
+  display:inline-flex; align-items:center; gap:6px;
+  padding:8px 15px; border-radius:9px; border:1px solid var(--border);
+  background:rgba(255,255,255,.04); color:var(--muted);
+  font-size:.82rem; font-weight:600; cursor:pointer;
+  font-family:'Outfit',sans-serif; transition:all .2s;
 }
-.spd-trigger:hover { border-color:var(--border-h); background:rgba(255,255,255,.09); }
-.spd-trigger .spd-arrow { font-size:.6rem; color:var(--muted); transition:transform .2s; }
-.spd-tray-wrap.open .spd-arrow { transform:rotate(180deg); }
-.spd-tray {
-  display:none; position:fixed;
-  background:#111318; border:1px solid var(--border-h);
-  border-radius:12px; padding:6px; min-width:210px;
-  box-shadow:0 8px 32px rgba(0,0,0,.7);
-  z-index:9999; animation:trayIn .15s ease;
-}
-@keyframes trayIn{from{opacity:0;transform:translateY(calc(-100% + 10px))}to{opacity:1;transform:translateY(-100%)}}
-.spd-tray-wrap.open .spd-tray { display:block; }
-.spd-opt {
-  display:flex; align-items:center; gap:10px;
-  padding:9px 12px; border-radius:8px; cursor:pointer;
-  font-size:.84rem; font-weight:600; color:var(--subtle);
-  font-family:'Outfit',sans-serif; transition:background .15s, color .15s;
-  border:none; background:transparent; width:100%; text-align:left;
-}
-.spd-opt:hover { background:rgba(255,255,255,.06); color:var(--text); }
-.spd-opt.active { color:var(--text); }
-.spd-opt .spd-dot { width:8px;height:8px;border-radius:50%;flex-shrink:0; }
-.spd-opt .spd-desc { font-size:.7rem; color:var(--muted); font-weight:400; margin-top:1px; display:block; }
+.spd-btn:hover { border-color:var(--border-h); color:var(--text); background:rgba(255,255,255,.08); }
+.spd-btn.active { color:#fff; border-color:transparent; }
+.spd-btn.active.spd-slow    { background:#06b6d4; box-shadow:0 2px 12px rgba(6,182,212,.35); }
+.spd-btn.active.spd-normal  { background:#10b981; box-shadow:0 2px 12px rgba(16,185,129,.35); }
+.spd-btn.active.spd-quick   { background:#f59e0b; color:#000; box-shadow:0 2px 12px rgba(245,158,11,.35); }
+.spd-btn.active.spd-instant { background:#ef4444; box-shadow:0 2px 12px rgba(239,68,68,.35); }
 </style>
 
 </head>
@@ -556,36 +538,18 @@ input:checked+.sw-track::before{transform:translateX(17px);}
       <button class="btn btn-green" onclick="resolveCaptcha()">✅ Mark Captcha Solved</button>
       <button class="btn btn-ghost" id="btn-pause"  onclick="pauseBot()">⏸ Pause</button>
       <button class="btn btn-primary" id="btn-resume" onclick="resumeBot()" style="display:none;">▶️ Resume</button>
-      <div class="spd-tray-wrap" id="spd-wrap">
-        <button class="spd-trigger" onclick="toggleSpeedTray()" id="spd-trigger">
-          <span id="spd-icon">&#x1F6E1;&#xFE0F;</span>
-          <span id="spd-label">Normal</span>
-          <span class="spd-arrow">&#x25B2;</span>
-        </button>
-        <div class="spd-tray">
-          <button class="spd-opt" id="spd-opt-slow" onclick="pickSpeed('slow')">
-            <span class="spd-dot" style="background:#06b6d4;"></span>
-            <div><span>&#x1F422; Slow</span><span class="spd-desc">8&#x2013;20s &middot; maximum stealth</span></div>
-          </button>
-          <button class="spd-opt active" id="spd-opt-normal" onclick="pickSpeed('normal')">
-            <span class="spd-dot" style="background:#10b981;"></span>
-            <div><span>&#x1F6E1;&#xFE0F; Normal</span><span class="spd-desc">1&#x2013;7s &middot; gaussian anti-detection</span></div>
-          </button>
-          <button class="spd-opt" id="spd-opt-quick" onclick="pickSpeed('quick')">
-            <span class="spd-dot" style="background:#f59e0b;"></span>
-            <div><span>&#x1F680; Quick</span><span class="spd-desc">300&#x2013;800ms &middot; competitor-aware</span></div>
-          </button>
-          <button class="spd-opt" id="spd-opt-instant" onclick="pickSpeed('instant')">
-            <span class="spd-dot" style="background:#ef4444;"></span>
-            <div><span>&#x26A1; Instant</span><span class="spd-desc">No delay &middot; high ban risk</span></div>
-          </button>
-        </div>
-      </div>
       <button class="btn btn-ghost" onclick="clearCatches()">🗑 Clear Catches</button>
       <div id="uptime-lbl">
         <span id="el-user2" style="color:var(--text);font-weight:700;">—</span>
         &nbsp;·&nbsp; Uptime: <span id="el-uptime2" style="color:var(--accent);">—</span>
       </div>
+    </div>
+    <div style="padding:0 18px 16px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-top:1px solid var(--border);padding-top:12px;">
+      <span style="font-size:.68rem;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;font-weight:700;margin-right:4px;">Catch Speed</span>
+      <button class="spd-btn spd-slow"    id="spd-slow"    onclick="setCatchSpeed('slow')">🐢 Slow</button>
+      <button class="spd-btn spd-normal active" id="spd-normal" onclick="setCatchSpeed('normal')">🛡️ Normal</button>
+      <button class="spd-btn spd-quick"   id="spd-quick"   onclick="setCatchSpeed('quick')">🚀 Quick</button>
+      <button class="spd-btn spd-instant" id="spd-instant" onclick="setCatchSpeed('instant')">⚡ Instant</button>
     </div>
   </div>
 
@@ -894,38 +858,13 @@ function applyIncense(d) {
   elIncense.innerHTML = chips.join('') || '<span class="inc-chip off">No channels</span>';
 }
 
-// ── CATCH SPEED TRAY ─────────────────────────────────────────────────────────
+// ── CATCH SPEED ───────────────────────────────────────────────────────────────
 const SPD_META = {
-  slow:    { icon:'🐢', label:'Slow',    dot:'#06b6d4', delayTxt:'8s\u201320s',    sub:'Max stealth',          warn:null },
-  normal:  { icon:'🛡️', label:'Normal',  dot:'#10b981', delayTxt:'1s\u20137s',     sub:'Gaussian anti-detect', warn:null },
-  quick:   { icon:'🚀', label:'Quick',   dot:'#f59e0b', delayTxt:'300\u2013800ms', sub:'Competitor-aware',     warn:'🚀 Quick mode ON — 300–800ms, no stealth guarantee.' },
-  instant: { icon:'⚡', label:'Instant', dot:'#ef4444', delayTxt:'0ms (bypass)',  sub:'No delay',             warn:'⚡ Instant mode ON — no anti-detection delay! High ban risk.' },
+  slow:    { delayTxt:'8s\u201320s',    sub:'Max stealth',          warn:null },
+  normal:  { delayTxt:'1s\u20137s',     sub:'Gaussian anti-detect', warn:null },
+  quick:   { delayTxt:'300\u2013800ms', sub:'Competitor-aware',     warn:'🚀 Quick mode ON — 300–800ms, no stealth guarantee.' },
+  instant: { delayTxt:'0ms (bypass)',   sub:'No delay',             warn:'⚡ Instant mode ON — no anti-detection delay! High ban risk.' },
 };
-
-function toggleSpeedTray() {
-  const wrap    = E('spd-wrap');
-  const trigger = E('spd-trigger');
-  const tray    = wrap.querySelector('.spd-tray');
-  const isOpen  = wrap.classList.contains('open');
-
-  if (isOpen) {
-    wrap.classList.remove('open');
-    return;
-  }
-
-  // position tray above the trigger using viewport coords (fixed positioning)
-  const rect = trigger.getBoundingClientRect();
-  tray.style.left = rect.left + 'px';
-  tray.style.top  = (rect.top - 8) + 'px'; // will be shifted up by transform below
-  tray.style.transform = 'translateY(-100%)';
-
-  wrap.classList.add('open');
-}
-
-function pickSpeed(speed) {
-  E('spd-wrap').classList.remove('open');
-  setCatchSpeed(speed);
-}
 
 function setCatchSpeed(speed) {
   applyCatchSpeed(speed);
@@ -934,40 +873,15 @@ function setCatchSpeed(speed) {
 
 function applyCatchSpeed(speed) {
   const m = SPD_META[speed] || SPD_META.normal;
-
-  // update trigger button
-  const icon  = E('spd-icon');
-  const label = E('spd-label');
-  if (icon)  icon.textContent  = m.icon;
-  if (label) label.textContent = m.label;
-
-  // update all option rows — highlight active
   ['slow','normal','quick','instant'].forEach(s => {
-    const opt = E(`spd-opt-${s}`);
-    if (opt) opt.classList.toggle('active', s === speed);
+    const btn = E(`spd-${s}`);
+    if (btn) btn.classList.toggle('active', s === speed);
   });
-
-  // colour the trigger border to match the active speed
-  const trigger = E('spd-trigger');
-  if (trigger) {
-    trigger.style.borderColor = m.dot;
-    trigger.style.color       = m.dot;
-  }
-
-  // update Anti-Detection card
   if (elAdval) elAdval.textContent = m.delayTxt;
   if (elDelay) elDelay.textContent = m.delayTxt;
   if (elAdsub) elAdsub.textContent = `${m.sub} \u00B7 ${speed.charAt(0).toUpperCase()+speed.slice(1)} mode`;
-
-  // fire warning pill if needed
   if (m.warn) showWarning('catch_speed', m.warn, speed === 'instant' ? 'error' : 'warn');
 }
-
-// close tray when clicking outside
-document.addEventListener('click', e => {
-  const wrap = E('spd-wrap');
-  if (wrap && !wrap.contains(e.target)) wrap.classList.remove('open');
-});
 
 // legacy shims
 function applyBoost(d) { applyCatchSpeed(d.active ? 'quick' : 'normal'); }
