@@ -1,6 +1,6 @@
 # Poketwo Autocatcher
 
-A free, open-source selfbot autocatcher for the [Pokétwo](https://poketwo.net/) Discord bot — with a real-time web dashboard, captcha alerts, audio warnings, and bulk transfer support.
+A free, open-source selfbot autocatcher for the [Pokétwo](https://poketwo.net/) Discord bot — with a real-time web dashboard, anti-detection human delay, anti-collision queueing, direct & hint catch modes, captcha alerts, audio warnings, and bulk transfer support.
 
 > ⚠️ **Disclaimer:** Selfbotting violates Discord's Terms of Service. Using this may result in your account being banned. Use a throwaway account. The authors are not responsible for any bans or losses.
 
@@ -8,16 +8,17 @@ A free, open-source selfbot autocatcher for the [Pokétwo](https://poketwo.net/)
 
 ## Features
 
-- **Autocatching** — detects Pokémon spawns via Poke-Name bot and catches them automatically
-- **Web Dashboard** — live stats, event log, spawn ticker, and controls at `http://localhost:3000`
-- **Captcha Alert** — stops catching on captcha detection, shows a popup + plays an alarm sound
+- **Direct Autocatching (Default)** — catches spawned Pokémon directly via Poke-Name bot messages across all channels
+- **Catch Mode Toggle** — switch seamlessly between **⚡ Direct Catch** and **💡 Hint Catch** from the web dashboard
+- **1s – 7s Anti-Detection Delay** — human-like randomized delays with gaussian distribution to prevent bot detection
+- **Anti-Collision Catch Queue** — FIFO queue ensures two catches never trigger simultaneously, enforcing a 2–3s gap
+- **Web Dashboard** — modern glassmorphism dashboard at `http://localhost:3000` with live stats, ticker, queue pill, and controls
+- **Captcha Alert** — pauses catching on captcha detection, shows popup alert + plays alarm sound
 - **Audio Toggle** — enable/disable the captcha alarm from the dashboard
-- **Pause / Resume** — pause and resume the autocatcher directly from the dashboard
-- **Bulk Transfer** — transfer all your Pokémon to another user via a single command or dashboard button
-- **Auto-levelling** — spam keeps your selected Pokémon levelling up passively
-- **Log Channel** — every caught Pokémon is logged with name and rarity to a Discord channel
-- **Error Channel** — errors are sent to a dedicated Discord channel
-- **Incense Support** — handles incense spawns (use a separate channel without Poke-Name for best results)
+- **Pause / Resume** — pause and resume autocatching directly from the dashboard or Discord
+- **Bulk Transfer** — transfer all your Pokémon to another user via `$transferall` or dashboard button
+- **Auto-levelling** — background spam keeps your selected Pokémon levelling up passively
+- **Log & Error Channels** — caught Pokémon logs with rarity and error logs sent to dedicated channels
 
 ---
 
@@ -35,8 +36,8 @@ A free, open-source selfbot autocatcher for the [Pokétwo](https://poketwo.net/)
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/Poketwo-Autocatcher.git
-cd Poketwo-Autocatcher
+git clone https://github.com/yatharthsinghgavel/poki-poki-pokitwo.git
+cd poki-poki-pokitwo
 ```
 
 ### 2. Install dependencies
@@ -59,6 +60,7 @@ Then open `config.json` and fill in each field:
 |---|---|
 | `TOKEN` | Your Discord account's user token ([how to get it](https://www.youtube.com/watch?v=3W9tAEsK7RM)) |
 | `spamChannelID` | Channel ID where the bot spams and catches Pokémon |
+| `incenseChannelID` | (Optional) Separate channel for incense spawns — no Poke-Name bot needed here |
 | `logChannelID` | Channel ID for caught Pokémon logs |
 | `errorChannelID` | Channel ID for error logs |
 | `OwnerID` | Your Discord user ID (right-click your name → Copy ID) |
@@ -84,16 +86,18 @@ Then open your browser to `http://localhost:3000` for the dashboard.
 
 The web dashboard runs at `http://localhost:3000` while the bot is active.
 
-| Section | Description |
+| Feature | Description |
 |---|---|
-| Status badge | Shows Online / Paused / Captcha |
-| Stat cards | Caught, Missed, Captchas, Account name + uptime |
-| Spawn ticker | Shows each Pokémon the moment it's detected |
-| Recent Catches | Live list of caught Pokémon with rarity, server, channel |
-| Live Log | All bot events in real time |
-| Controls | Pause/Resume bot, Mark Captcha Solved, Clear Catches |
-| Transfer All | Bulk transfer all Pokémon to another user |
-| 🔔 Captcha Alert toggle | Enable/disable alarm sound on captcha |
+| Catch Mode Selector | Toggle between **⚡ Direct Catch** (default) and **💡 Hint Catch** |
+| Status badge | Shows Active / Paused / Captcha / Offline |
+| Stat cards | Caught, Missed, Total Spawns, Catch Rate %, Anti-Detection Delay, Uptime |
+| Anti-Collision Queue Pill | Displays real-time pending catch queue count |
+| Live Ticker | Shows live Pokémon spawns with detection method & countdown |
+| Recent Catches | Live list of caught Pokémon with rarity, server, and channel |
+| Live Event Log | Real-time WebSocket log stream |
+| Controls | Pause/Resume, Mark Captcha Solved, Clear Catches |
+| Bulk Transfer | Transfer all Pokémon to another user ID via trade |
+| 🔔 Captcha Alert Toggle | Enable/disable audio alarm on captcha |
 
 ---
 
@@ -105,7 +109,7 @@ Type these in any Discord channel. Only works from the account set as `OwnerID`.
 |---|---|
 | `$help` | Shows all available commands |
 | `$captcha_completed` | Resumes the bot after solving a captcha |
-| `$say <text>` | Makes the bot send a message (useful for trading) |
+| `$say <text>` | Makes the bot send a message |
 | `$react <messageID>` | Reacts to a message with ✅ |
 | `$click <messageID>` | Clicks the ✅ button on a message |
 | `$transferall <userID>` | Transfers all your Pokémon to the given user |
@@ -116,101 +120,24 @@ Type these in any Discord channel. Only works from the account set as `OwnerID`.
 
 The transfer system automates the full Pokétwo trade flow:
 
-1. Sends `@Pokétwo trade @targetUser`
+1. Sends `<@716390085896962058> trade <@targetUser>`
 2. Waits up to 2 minutes for the target to accept (they click ✅)
-3. Runs `@Pokétwo t aa` in batches of 10 until all Pokémon are added
-4. Sends `@Pokétwo confirm` and clicks the confirm button automatically
+3. Runs `<@716390085896962058> t aa` in batches of 10 until all Pokémon are added
+4. Sends `<@716390085896962058> confirm` and clicks the confirm button automatically
 
-You can also trigger this from the **Transfer All** panel in the dashboard — enter the User ID and the Channel ID where the trade should happen.
-
-> The receiving user must be in the same server and click ✅ to accept the trade request.
+You can also trigger this from the **Bulk Transfer** panel in the dashboard.
 
 ---
 
-## Pokétwo Command Reference
-
-Useful Pokétwo commands to know when managing your account manually:
-
-| Command | Description |
-|---|---|
-| `@Pokétwo start` | Pick your starter Pokémon (required before catching) |
-| `@Pokétwo c <name>` | Catch a spawned Pokémon |
-| `@Pokétwo p` | View your Pokémon collection |
-| `@Pokétwo info` | View your currently selected Pokémon |
-| `@Pokétwo select <id>` | Select a Pokémon to level up |
-| `@Pokétwo trade @user` | Start a trade with a user |
-| `@Pokétwo t a <id>` | Add a Pokémon to an open trade |
-| `@Pokétwo t aa` | Add up to 10 Pokémon at once to an open trade |
-| `@Pokétwo confirm` | Confirm a trade (then click the button) |
-| `@Pokétwo t cancel` | Cancel an ongoing trade |
-| `@Pokétwo bal` | Check your Pokécoins balance |
-| `@Pokétwo buy incense` | Buy an incense for more spawns |
-| `@Pokétwo release <id>` | Release a Pokémon |
-| `@Pokétwo h` | Get a hint on the current Pokémon spawn |
-| `@Pokétwo dex <name>` | View a Pokémon's Pokédex entry |
-
----
-
-## Captcha Handling
-
-When Pokétwo sends a captcha:
-1. The autocatcher **stops catching immediately**
-2. A **popup alert appears on the dashboard**
-3. An **alarm sound plays** (if audio is enabled)
-4. The bot auto-resumes after **5 hours** if you don't respond
-
-To resolve manually:
-- Solve the captcha in Discord
-- Click **"Mark Captcha Solved"** on the dashboard, **or** type `$captcha_completed` in Discord
-
----
-
-## Specific Channel Support
-
-To restrict catching to specific channels only, open `index.js` and add channel IDs to the `allowedChannels` array at the top:
-
-```js
-const allowedChannels = ["123456789", "987654321"]; // leave [] for all channels
-```
-
----
-
-## Versioning
-
-This project follows [Semantic Versioning](https://semver.org/):
-
-- **MAJOR** version for breaking changes
-- **MINOR** version for new features
-- **PATCH** version for bug fixes
-
-Releases are tagged on GitHub (e.g. `v1.3.0`, `v1.4.0`). Check the [Releases](../../releases) page for changelogs.
-
-### Changelog
+## Changelog
 
 | Version | Changes |
 |---|---|
-| v1.4.1 | Incense channel support — separate spam + catch channel for incense, auto-rebuy and re-use when incense runs out |
+| v1.5.1 | Incense channel support — separate spam + catch channel for incense, auto-rebuy and re-use when incense runs out |
+| v1.5.0 | Added Direct Catching as default, 1-7s anti-detection human delay, anti-collision catch queue, Catch Mode Toggle on dashboard, and modernized glassmorphism UI |
 | v1.4.0 | Web dashboard, WebSocket events, pause/resume, bulk transfer, captcha audio alert |
 | v1.3.2 | Fixed Poke-Name `## PokemonName` message format detection |
 | v1.3.0 | Initial open-source release |
-
----
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/your-feature`
-3. Commit your changes: `git commit -m "feat: add your feature"`
-4. Push to your branch: `git push origin feature/your-feature`
-5. Open a Pull Request against `main`
-
-Please use [Conventional Commits](https://www.conventionalcommits.org/) for commit messages (`feat:`, `fix:`, `chore:`, etc.).
-
----
-
-## Support
-
-Join the support server: [discord.gg/FJD29BV8Np](https://discord.gg/FJD29BV8Np)
 
 ---
 

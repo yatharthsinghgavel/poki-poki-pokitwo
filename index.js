@@ -18,6 +18,63 @@ const config = require('./config.json')
 const json = require('./namefix.json');
 const allowedChannels = [];
 let isSleeping = false;
+let catchMode = 'direct'; // 'direct' or 'hint' — toggled from dashboard
+
+// ---- CATCH QUEUE (anti-detection: never send two catches at the same time) ----
+const catchQueue = [];
+let catchBusy = false;
+let lastCatchTime = 0;
+
+function humanDelay() {
+    // Gaussian-ish random between 1000ms and 7000ms, clustered around 3-4s
+    const r1 = Math.random(), r2 = Math.random();
+    const gaussian = Math.sqrt(-2 * Math.log(r1)) * Math.cos(2 * Math.PI * r2);
+    const base = 4000; // center
+    const spread = 1500;
+    let ms = Math.round(base + gaussian * spread);
+    ms = Math.max(1000, Math.min(7000, ms)); // clamp 1-7s
+    return ms;
+}
+
+async function processCatchQueue() {
+    if (catchBusy || catchQueue.length === 0) return;
+    catchBusy = true;
+
+    while (catchQueue.length > 0) {
+        const job = catchQueue.shift();
+        broadcast('queue', { size: catchQueue.length, processing: job.name });
+
+        // Ensure minimum gap from last catch (at least 2s between any two catch commands)
+        const elapsed = Date.now() - lastCatchTime;
+        const minGap = 2000 + Math.floor(Math.random() * 1000); // 2-3s minimum gap
+        if (elapsed < minGap) {
+            await sleep(minGap - elapsed);
+        }
+
+        // Wait the human-like delay
+        await sleep(job.delay);
+
+        lastCatchTime = Date.now();
+        try {
+            await job.execute();
+        } catch (err) {
+            logEvent(`Catch queue error: ${err}`, 'error');
+        }
+    }
+
+    catchBusy = false;
+    broadcast('queue', { size: 0, processing: null });
+}
+
+function enqueueCatch(name, delay, executeFn) {
+    catchQueue.push({ name, delay, execute: executeFn });
+    stats.spawns++;
+    broadcast('stats', {
+        caught: stats.caught, missed: stats.missed, captchas: stats.captchas,
+        spawns: stats.spawns, queueSize: catchQueue.length
+    });
+    processCatchQueue();
+}
 
 //------------------------- DASHBOARD SERVER --------------------------------//
 
@@ -39,6 +96,7 @@ const stats = {
     caught: 0,
     missed: 0,
     captchas: 0,
+    spawns: 0,
     startTime: Date.now(),
     recentCatches: [],   // last 50 catches
     botStatus: 'online',
@@ -59,7 +117,7 @@ let transferChannelId = null;
 
 // Send full state to a newly connected client
 wss.on('connection', ws => {
-    ws.send(JSON.stringify({ type: 'init', data: stats }));
+    ws.send(JSON.stringify({ type: 'init', data: { ...stats, catchMode } }));
 
     ws.on('message', raw => {
         try {
@@ -93,6 +151,15 @@ wss.on('connection', ws => {
                 }
                 startTransfer(ch, targetId);
             }
+            if (msg.type === 'set_catch_mode') {
+                const mode = msg.data?.mode;
+                if (mode === 'direct' || mode === 'hint') {
+                    catchMode = mode;
+                    broadcast('catch_mode', { mode: catchMode });
+                    broadcast('log', { text: `🔄 Catch mode changed to: ${catchMode.toUpperCase()}`, level: 'success' });
+                    logEvent(`Catch mode changed to: ${catchMode}`, 'info');
+                }
+            }
         } catch (_) {}
     });
 });
@@ -108,6 +175,55 @@ server.listen(process.env.PORT || 3000, () => {
 function findOutput(input) {
     if (json.hasOwnProperty(input)) return json[input];
     return input;
+}
+
+function extractPokemonName(message) {
+    let rawText = null;
+
+    if (message.content) {
+        const content = message.content.trim();
+
+        // 1. Format: "Deino :_:【:dark_type::dragon_type:】" or "Pidove :_:【:normal_type::flying_type:】"
+        if (content.includes(":_:") || content.includes("【")) {
+            const match = content.match(/^[\*\#\s]*([^\n\r:_:\【\<]+?)\s*(?::_|:_:|【)/);
+            if (match && match[1].trim()) {
+                rawText = match[1].trim();
+            }
+        }
+
+        // 2. Format: "## PokemonName <emoji>"
+        if (!rawText && content.startsWith("##")) {
+            const contentMatch = content.match(/^##\s+([^\n\r\<【]+?)[\s<【]/);
+            if (contentMatch && contentMatch[1].trim()) {
+                rawText = contentMatch[1].trim();
+            }
+        }
+    }
+
+    // 3. Fallback: Embed titles and descriptions
+    if (!rawText && message.embeds && message.embeds.length > 0) {
+        for (const e of message.embeds) {
+            const raw = (e.title || "") + " " + (e.description || "");
+            const match = raw.match(/^\*?\*?([^\n\r:_:\【🏃\[]+?)\*?\*?\s*(🏃|【|\[|:_:|$)/);
+            if (match && match[1].trim()) {
+                rawText = match[1].trim();
+                break;
+            }
+            const descMatch = (e.description || "").match(/\*\*([^\n\r\*]+?)\*\*/);
+            if (descMatch && descMatch[1].trim()) {
+                rawText = descMatch[1].trim();
+                break;
+            }
+        }
+    }
+
+    if (!rawText) return null;
+
+    // Clean up markdown formatting characters (*, #, _, spaces)
+    rawText = rawText.replace(/^[\*\#\s_]+|[\*\#\s_]+$/g, '').trim();
+    if (!rawText) return null;
+
+    return findOutput(rawText);
 }
 
 function addCatch(name, rarity, guild, channel) {
@@ -294,7 +410,6 @@ client.on('ready', () => {
         return Math.floor(Math.random() * (max - min + 1)) + min;
     }
 
-    // Spam in the main spam channel (generates spawns + XP)
     function spam() {
         const result = Math.random().toString(36).substring(2, 15);
         channel.send(result + "(Made by 🔥⃤•AK_ØPᵈᵉᵛ✓#6326) ");
@@ -303,7 +418,7 @@ client.on('ready', () => {
     }
     spam();
 
-    // Also spam in the incense channel to trigger incense spawns
+    // Spam in incense channel to trigger incense spawns (no Poke-Name there — caught via OCR)
     if (incenseChannel) {
         logEvent(`Incense channel active: #${incenseChannel.name}`, 'info');
         function incenseSpam() {
@@ -417,26 +532,68 @@ client.on('messageCreate', async message => {
             stats.missed++;
             broadcast('stats', { caught: stats.caught, missed: stats.missed, captchas: stats.captchas });
             logEvent('Wrong Pokémon sent — missed catch.', 'warn');
-            message.channel.send(`<@716390085896962058> h`);
+            // In hint mode, re-request hint after wrong guess
+            if (catchMode === 'hint') {
+                message.channel.send(`<@716390085896962058> h`);
+            }
 
         } else if (message.author.id == "716390085896962058") {
             if (message?.embeds[0]?.footer?.text.includes("Spawns Remaining")) {
-                await message.channel.send(`<@716390085896962058> h`);
+                // In hint mode, request hint for incense spawns
+                if (catchMode === 'hint') {
+                    await message.channel.send(`<@716390085896962058> h`);
+                }
                 if ((message.embeds[0]?.footer?.text == "Incense: Active.\nSpawns Remaining: 0.")) {
                     logEvent('Incense ran out — rebuying...', 'warn');
                     message.channel.send(`<@716390085896962058> buy incense`);
                     await sleep(2000);
                     message.channel.send(`<@716390085896962058> use incense`);
                 }
-            } else if (message.content.includes("The pokémon is")) {
-                let rarity;
-                const pokemon = await solveHint(message);
-                logEvent(`Catching ${pokemon[0]} (hint method)`, 'info');
-                await message.channel.send(`<@716390085896962058> c ${pokemon[0]}`);
-                try { rarity = await checkRarity(`${pokemon[0]}`); } catch { rarity = "Not Found in Database"; }
-                addCatch(pokemon[0], rarity, message.guild?.name || '?', message.channel?.name || '?');
-                const channel6 = client.channels.cache.get(config.logChannelID);
-                channel6.send("[" + message.guild.name + "/#" + message.channel.name + "] " + "**__" + pokemon[0] + "__** " + "Rarity " + rarity);
+            } else if (catchMode === 'hint' && message.content.includes("The pokémon is")) {
+                // Hint mode: solve the hint from Pokétwo
+                try {
+                    const pokemon = await solveHint(message);
+                    const name = pokemon[0];
+                    const delay = humanDelay();
+                    logEvent(`[Hint] Solved hint: ${name} — queued (${delay / 1000}s delay)`, 'info');
+                    broadcast('spawn', { name, delay: delay / 1000, method: 'Hint', queueSize: catchQueue.length + 1 });
+
+                    const chan = message.channel;
+                    const guildName = message.guild?.name || '?';
+                    const chanName = message.channel?.name || '?';
+
+                    enqueueCatch(name, delay, async () => {
+                        logEvent(`[Hint] Catching ${name} now...`, 'info');
+                        await chan.send(`<@716390085896962058> c ${name}`)
+                            .catch(error => {
+                                logEvent(`Send error: ${error}`, 'error');
+                                client.channels.cache.get(config.errorChannelID)?.send(String(error));
+                            });
+
+                        const filter = (msg) => msg.author.id === "716390085896962058";
+                        const collector = new Discord.MessageCollector(chan, filter, { max: 1, time: 13000 });
+                        await new Promise(resolve => {
+                            collector.on('collect', async (collected) => {
+                                if (collected.content.includes("Congratulations")) {
+                                    let rareity;
+                                    try { rareity = await checkRarity(name); } catch { rareity = "Not Found in Database"; }
+                                    addCatch(name, rareity, guildName, chanName);
+                                    const logchannel = client.channels.cache.get(config.logChannelID);
+                                    logchannel?.send("[" + guildName + "/#" + chanName + "] " + "**__" + name + "__** " + "Rarity " + rareity)
+                                        .catch(error => {
+                                            logEvent(`Log error: ${error}`, 'error');
+                                            client.channels.cache.get(config.errorChannelID)?.send(String(error));
+                                        });
+                                    collector.stop();
+                                }
+                                resolve();
+                            });
+                            collector.on('end', () => resolve());
+                        });
+                    });
+                } catch (err) {
+                    logEvent(`[Hint] Failed to solve hint: ${err}`, 'error');
+                }
             }
 
         } else {
@@ -444,64 +601,61 @@ client.on('messageCreate', async message => {
             const Pokebots = ["696161886734909481", "874910942490677270"];
             if (allowedChannels.length > 0 && !allowedChannels.includes(message.channel.id)) return;
 
-            // Also allow incense channel catches even if allowedChannels is set
-            const isIncenseChannel = config.incenseChannelID && message.channel.id === config.incenseChannelID;
-            if (allowedChannels.length > 0 && !allowedChannels.includes(message.channel.id) && !isIncenseChannel) return;
-
             if (Pokebots.includes(message.author.id)) {
 
-                // Extract name from Poke-Name embed text
-                let textName = null;
-                if (message.embeds.length > 0) {
-                    for (const e of message.embeds) {
-                        const raw = (e.title || "") + " " + (e.description || "");
-                        const match = raw.match(/^\*?\*?([A-Za-z\-\. ]+?)\*?\*?\s*(🏃|【|\[|$)/);
-                        if (match) { textName = match[1].trim(); break; }
-                        const descMatch = (e.description || "").match(/\*\*([A-Za-z\-\. ]+?)\*\*/);
-                        if (descMatch) { textName = descMatch[1].trim(); break; }
-                    }
+                // In hint mode with Poke-Name bot, request a hint instead of catching directly
+                if (catchMode === 'hint') {
+                    logEvent(`[Hint Mode] Poke-Name detected spawn, requesting hint...`, 'info');
+                    await message.channel.send(`<@716390085896962058> h`);
+                    return;
                 }
 
-                // Extract name from "## PokemonName <emoji>" content format
-                if (!textName && message.content) {
-                    const contentMatch = message.content.match(/^##\s+([A-Za-z\-\.\(\) ]+?)[\s<【]/);
-                    if (contentMatch) textName = contentMatch[1].trim();
-                }
+                // Direct mode: extract name from Poke-Name (bot 874910942490677270) message or embed
+                const textName = extractPokemonName(message);
 
                 if (textName) {
-                    const name = findOutput(textName);
-                    const delay = Math.floor(Math.random() * 6 + 5) * 1000;
-                    logEvent(`Pokémon spawned: ${name} — catching in ${delay / 1000}s`, 'info');
-                    broadcast('spawn', { name, delay: delay / 1000 });
+                    const name = textName;
+                    const delay = humanDelay();
+                    logEvent(`[Direct] Pokémon spawned: ${name} — queued (${delay / 1000}s delay, ${catchQueue.length} in queue)`, 'info');
+                    broadcast('spawn', { name, delay: delay / 1000, method: 'Direct', queueSize: catchQueue.length + 1 });
 
-                    setTimeout(async () => {
-                        message.channel.send(`<@716390085896962058> c ${name}`)
+                    const chan = message.channel;
+                    const guildName = message.guild?.name || '?';
+                    const chanName = message.channel?.name || '?';
+
+                    enqueueCatch(name, delay, async () => {
+                        logEvent(`[Poke-Name] Catching ${name} now...`, 'info');
+                        await chan.send(`<@716390085896962058> c ${name}`)
                             .catch(error => {
                                 logEvent(`Send error: ${error}`, 'error');
                                 client.channels.cache.get(config.errorChannelID)?.send(String(error));
                             });
 
                         const filter = (msg) => msg.author.id === "716390085896962058";
-                        const collector = new Discord.MessageCollector(message.channel, filter, { max: 1, time: 13000 });
-                        collector.on('collect', async (collected) => {
-                            if (collected.content.includes("Congratulations")) {
-                                function capitalizeFirstLetter(str) {
-                                    return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
+                        const collector = new Discord.MessageCollector(chan, filter, { max: 1, time: 13000 });
+                        await new Promise(resolve => {
+                            collector.on('collect', async (collected) => {
+                                if (collected.content.includes("Congratulations")) {
+                                    function capitalizeFirstLetter(str) {
+                                        return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
+                                    }
+                                    let rareity;
+                                    const name2 = capitalizeFirstLetter(name);
+                                    try { rareity = await checkRarity(`${name2}`); } catch { rareity = "Not Found in Database"; }
+                                    addCatch(name2, rareity, guildName, chanName);
+                                    const logchannel = client.channels.cache.get(config.logChannelID);
+                                    logchannel?.send("[" + guildName + "/#" + chanName + "] " + "**__" + name2 + "__** " + "Rarity " + rareity)
+                                        .catch(error => {
+                                            logEvent(`Log error: ${error}`, 'error');
+                                            client.channels.cache.get(config.errorChannelID)?.send(String(error));
+                                        });
+                                    collector.stop();
                                 }
-                                let rareity;
-                                const name2 = capitalizeFirstLetter(name);
-                                try { rareity = await checkRarity(`${name2}`); } catch { rareity = "Not Found in Database"; }
-                                addCatch(name2, rareity, collected.guild?.name || '?', collected.channel?.name || '?');
-                                const logchannel = client.channels.cache.get(config.logChannelID);
-                                logchannel?.send("[" + collected.guild.name + "/#" + collected.channel.name + "] " + "**__" + name2 + "__** " + "Rarity " + rareity)
-                                    .catch(error => {
-                                        logEvent(`Log error: ${error}`, 'error');
-                                        client.channels.cache.get(config.errorChannelID)?.send(String(error));
-                                    });
-                                collector.stop();
-                            }
+                                resolve();
+                            });
+                            collector.on('end', () => resolve());
                         });
-                    }, delay);
+                    });
                     return;
                 }
 
@@ -521,38 +675,47 @@ client.on('messageCreate', async message => {
                         const name1 = res1.ParsedResults[0].ParsedText.split('\r')[0];
                         const name5 = name1.replace(/Q/g, 'R');
                         const name = findOutput(name5);
-                        const delay = Math.floor(Math.random() * 6 + 5) * 1000;
-                        logEvent(`[OCR] Pokémon spawned: ${name} — catching in ${delay / 1000}s`, 'info');
-                        broadcast('spawn', { name, delay: delay / 1000 });
+                        const delay = humanDelay();
+                        logEvent(`[OCR] Pokémon spawned: ${name} — queued (${delay / 1000}s delay, ${catchQueue.length} in queue)`, 'info');
+                        broadcast('spawn', { name, delay: delay / 1000, method: 'OCR', queueSize: catchQueue.length + 1 });
 
-                        setTimeout(async () => {
-                            message.channel.send(`<@716390085896962058> c ${name}`)
+                        const chan = message.channel;
+                        const guildName = message.guild?.name || '?';
+                        const chanName = message.channel?.name || '?';
+
+                        enqueueCatch(name, delay, async () => {
+                            logEvent(`[OCR] Catching ${name} now...`, 'info');
+                            await chan.send(`<@716390085896962058> c ${name}`)
                                 .catch(error => {
                                     logEvent(`Send error: ${error}`, 'error');
                                     client.channels.cache.get(config.errorChannelID)?.send(String(error));
                                 });
 
                             const filter = (msg) => msg.author.id === "716390085896962058";
-                            const collector = new Discord.MessageCollector(message.channel, filter, { max: 1, time: 13000 });
-                            collector.on('collect', async (collected) => {
-                                if (collected.content.includes("Congratulations")) {
-                                    function capitalizeFirstLetter(str) {
-                                        return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
+                            const collector = new Discord.MessageCollector(chan, filter, { max: 1, time: 13000 });
+                            await new Promise(resolve => {
+                                collector.on('collect', async (collected) => {
+                                    if (collected.content.includes("Congratulations")) {
+                                        function capitalizeFirstLetter(str) {
+                                            return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
+                                        }
+                                        let rareity;
+                                        const name2 = capitalizeFirstLetter(name);
+                                        try { rareity = await checkRarity(`${name2}`); } catch { rareity = "Not Found in Database"; }
+                                        addCatch(name2, rareity, guildName, chanName);
+                                        const logchannel = client.channels.cache.get(config.logChannelID);
+                                        logchannel?.send("[" + guildName + "/#" + chanName + "] " + "**__" + name2 + "__** " + "Rarity " + rareity)
+                                            .catch(error => {
+                                                logEvent(`Log error: ${error}`, 'error');
+                                                client.channels.cache.get(config.errorChannelID)?.send(String(error));
+                                            });
+                                        collector.stop();
                                     }
-                                    let rareity;
-                                    const name2 = capitalizeFirstLetter(name);
-                                    try { rareity = await checkRarity(`${name2}`); } catch { rareity = "Not Found in Database"; }
-                                    addCatch(name2, rareity, collected.guild?.name || '?', collected.channel?.name || '?');
-                                    const logchannel = client.channels.cache.get(config.logChannelID);
-                                    logchannel?.send("[" + collected.guild.name + "/#" + collected.channel.name + "] " + "**__" + name2 + "__** " + "Rarity " + rareity)
-                                        .catch(error => {
-                                            logEvent(`Log error: ${error}`, 'error');
-                                            client.channels.cache.get(config.errorChannelID)?.send(String(error));
-                                        });
-                                    collector.stop();
-                                }
+                                    resolve();
+                                });
+                                collector.on('end', () => resolve());
                             });
-                        }, delay);
+                        });
                     } catch (error) {
                         logEvent(`OCR error: ${error}`, 'error');
                         client.channels.cache.get(config.errorChannelID)?.send(String(error));
