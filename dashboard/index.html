@@ -339,13 +339,13 @@ input:checked+.sw-track::before{transform:translateX(17px);}
 .spd-trigger .spd-arrow { font-size:.6rem; color:var(--muted); transition:transform .2s; }
 .spd-tray-wrap.open .spd-arrow { transform:rotate(180deg); }
 .spd-tray {
-  display:none; position:absolute; bottom:calc(100% + 8px); left:0;
+  display:none; position:fixed;
   background:#111318; border:1px solid var(--border-h);
-  border-radius:12px; padding:6px; min-width:200px;
-  box-shadow:0 8px 32px rgba(0,0,0,.55);
-  z-index:300; animation:trayIn .15s ease;
+  border-radius:12px; padding:6px; min-width:210px;
+  box-shadow:0 8px 32px rgba(0,0,0,.7);
+  z-index:9999; animation:trayIn .15s ease;
 }
-@keyframes trayIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@keyframes trayIn{from{opacity:0;transform:translateY(calc(-100% + 10px))}to{opacity:1;transform:translateY(-100%)}}
 .spd-tray-wrap.open .spd-tray { display:block; }
 .spd-opt {
   display:flex; align-items:center; gap:10px;
@@ -903,8 +903,23 @@ const SPD_META = {
 };
 
 function toggleSpeedTray() {
-  const wrap = E('spd-wrap');
-  wrap.classList.toggle('open');
+  const wrap    = E('spd-wrap');
+  const trigger = E('spd-trigger');
+  const tray    = wrap.querySelector('.spd-tray');
+  const isOpen  = wrap.classList.contains('open');
+
+  if (isOpen) {
+    wrap.classList.remove('open');
+    return;
+  }
+
+  // position tray above the trigger using viewport coords (fixed positioning)
+  const rect = trigger.getBoundingClientRect();
+  tray.style.left = rect.left + 'px';
+  tray.style.top  = (rect.top - 8) + 'px'; // will be shifted up by transform below
+  tray.style.transform = 'translateY(-100%)';
+
+  wrap.classList.add('open');
 }
 
 function pickSpeed(speed) {
