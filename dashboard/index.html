@@ -525,6 +525,7 @@ input:checked+.sw-track::before{transform:translateX(17px);}
       <button class="btn btn-ghost" id="btn-pause"  onclick="pauseBot()">⏸ Pause</button>
       <button class="btn btn-primary" id="btn-resume" onclick="resumeBot()" style="display:none;">▶️ Resume</button>
       <button class="btn btn-amber" id="btn-boost" onclick="toggleBoost()">🚀 Boost: OFF</button>
+      <button class="btn btn-ghost" id="btn-instant" onclick="toggleInstantCatch()" title="Bypass queue and anti-detection delay — catch fires the instant a spawn is detected. High ban risk.">⚡ Instant: OFF</button>
       <button class="btn btn-ghost" onclick="clearCatches()">🗑 Clear Catches</button>
       <div id="uptime-lbl">
         <span id="el-user2" style="color:var(--text);font-weight:700;">—</span>
@@ -619,7 +620,7 @@ const elXferLog  = E('xfer-log'),    elXferBadge = E('el-xfer-badge');
 const elEffPct   = E('eff-pct'),     elEffArc    = E('eff-arc');
 const elEffC     = E('eff-c'),       elEffM      = E('eff-m');
 const btnPause   = E('btn-pause'),   btnResume   = E('btn-resume');
-const btnBoost   = E('btn-boost');
+const btnBoost   = E('btn-boost'),   btnInstant  = E('btn-instant');
 const audioChk   = E('audio-chk');
 const capModal   = E('cap-modal');
 
@@ -665,6 +666,7 @@ function dispatch(msg) {
     case 'captcha':          onCaptcha(msg.data);              break;
     case 'captcha_resolved': dismissCap(); stopAlarm(); setStatus('online'); addLog('✅ Captcha resolved — bot resumed.','success'); break;
     case 'boost':            applyBoost(msg.data);             break;
+    case 'instant_catch':    applyInstantCatch(msg.data);      break;
     case 'quest':            applyQuest(msg.data);             break;
     case 'milestone':        onMilestone(msg.data);            break;
     case 'incense':          applyIncense(msg.data);           break;
@@ -687,6 +689,7 @@ function applyInit(d) {
   if (d.username)  { elUser.textContent = d.username; elUser2.textContent = d.username; }
   if (d.catchMode) applyCatchMode(d.catchMode);
   if (d.boostMode !== undefined) applyBoost({ active: d.boostMode });
+  if (d.instantCatch !== undefined) applyInstantCatch({ active: d.instantCatch });
   refreshRate(d.caught ?? 0, d.missed ?? 0);
 
   if (d.recentCatches?.length) {
@@ -855,6 +858,24 @@ function applyBoost(d) {
 }
 
 function toggleBoost() { send({ type: 'toggle_boost' }); }
+
+// ── INSTANT CATCH ────────────────────────────────────────────────────────────
+function toggleInstantCatch() { send({ type: 'toggle_instant_catch' }); }
+
+function applyInstantCatch(d) {
+  if (d.active) {
+    btnInstant.textContent      = '⚡ Instant: ON';
+    btnInstant.style.background = 'var(--red)';
+    btnInstant.style.color      = '#fff';
+    btnInstant.title            = 'Instant Catch is ON — queue & delay bypassed. High ban risk. Click to disable.';
+    showWarning('instant_catch', '⚡ Instant Catch is ON — no anti-detection delay! Use with caution.', 'error');
+  } else {
+    btnInstant.textContent      = '⚡ Instant: OFF';
+    btnInstant.style.background = '';
+    btnInstant.style.color      = '';
+    btnInstant.title            = 'Bypass queue and anti-detection delay — catch fires the instant a spawn is detected. High ban risk.';
+  }
+}
 
 // ── MILESTONE ────────────────────────────────────────────────────────────────
 function onMilestone(d) {

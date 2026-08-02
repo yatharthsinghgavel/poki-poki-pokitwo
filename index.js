@@ -28,6 +28,7 @@ const json   = require('./namefix.json');
 
 let isSleeping = false;
 let catchMode  = 'direct'; // 'direct' | 'hint'
+let instantCatch = false;  // bypass queue & delay — fire immediately
 
 // ─── ANTI-DETECTION ──────────────────────────────────────────────────────────
 // Each session gets a unique jitter so timing fingerprint changes on every restart.
@@ -59,6 +60,16 @@ async function processCatchQueue() {
 }
 
 function enqueueCatch(name, fn) {
+    // ── INSTANT CATCH MODE: skip queue and delay entirely ──
+    if (instantCatch) {
+        stats.spawns++;
+        broadcast('stats', { caught: stats.caught, missed: stats.missed,
+                             captchas: stats.captchas, spawns: stats.spawns,
+                             pc: stats.pc, queueSize: catchQueue.length, ...calculateRates() });
+        fn().catch(e => logEvent(`Instant catch error: ${e}`, 'error'));
+        return;
+    }
+
     if (catchQueue.length >= 3) {
         logEvent(`Queue full — dropping oldest (${catchQueue[0].name}) to catch ${name}`, 'warn');
         catchQueue.shift();
@@ -254,7 +265,7 @@ let transferActive = false;
 
 wss.on('connection', ws => {
     const rates = calculateRates();
-    ws.send(JSON.stringify({ type: 'init', data: { ...stats, catchMode, competitors: Object.values(competitors), ...rates, history } }));
+    ws.send(JSON.stringify({ type: 'init', data: { ...stats, catchMode, instantCatch, competitors: Object.values(competitors), ...rates, history } }));
     ws.on('message', raw => {
         try {
             const msg = JSON.parse(raw);
@@ -286,6 +297,12 @@ wss.on('connection', ws => {
                 broadcast('boost', { active: boostMode });
                 broadcast('log', { text: boostMode ? '🚀 Boost mode ON — fast catch enabled' : '🛡️ Boost mode OFF — stealth timing restored', level: boostMode ? 'warn' : 'success' });
                 logEvent(`Boost mode: ${boostMode ? 'ON' : 'OFF'}`, 'warn');
+            }
+            if (msg.type === 'toggle_instant_catch') {
+                instantCatch = !instantCatch;
+                broadcast('instant_catch', { active: instantCatch });
+                broadcast('log', { text: instantCatch ? '⚡ Instant Catch ON — queue & delay bypassed' : '🛡️ Instant Catch OFF — normal queue & delay restored', level: instantCatch ? 'warn' : 'success' });
+                logEvent(`Instant catch: ${instantCatch ? 'ON' : 'OFF'}`, 'warn');
             }
             if (msg.type === 'transfer_all') {
                 const { targetId, channelId } = msg.data;
