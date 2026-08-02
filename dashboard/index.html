@@ -733,6 +733,7 @@ let audioEnabled = true, alertPlaying = false;
 let audioCtx = null, beepInterval = null;
 let currentMode = 'direct';
 const incenseMap = {};
+const incenseDisabled = new Set(); // channelIds that are toggled off
 const activeWarnings = {};
 const DOM_CAP = 50;
 
@@ -779,6 +780,8 @@ function dispatch(msg) {
     case 'competitor':       applyCompetitor(msg.data);        break;
     case 'warning':          showWarning(msg.data.type, msg.data.msg, msg.data.level); break;
     case 'transfer':         handleTransfer(msg.data);         break;
+    case 'auto_buy_incense': applyAutoBuyIncense(msg.data);    break;
+    case 'incense_channel_toggled': applyIncenseChannelToggled(msg.data); break;
   }
 }
 </script>
@@ -807,6 +810,11 @@ function applyInit(d) {
   if (rk.some(k => d[k] !== undefined)) updateStats(d);
   if (d.history) applyHistory(d.history);
   if (d.startTime) { startTime = d.startTime; startUptime(); }
+  if (d.autoBuyIncense !== undefined) applyAutoBuyIncense({ active: d.autoBuyIncense });
+  if (Array.isArray(d.disabledIncenseChannels)) {
+    incenseDisabled.clear();
+    d.disabledIncenseChannels.forEach(id => incenseDisabled.add(id));
+  }
   if (d.botStatus === 'captcha') setStatus('captcha');
   else if (d.botStatus === 'online') setStatus('online');
 }
@@ -959,13 +967,35 @@ function renderIncenseRow(channelId, name, active) {
     row.style.cssText = 'display:flex;align-items:center;gap:8px;';
     list.appendChild(row);
   }
+  const enabled = !incenseDisabled.has(channelId);
   const dot   = active ? '🟢' : '⚪';
   const color = active ? 'var(--green)' : 'var(--muted)';
+  const toggleTitle = enabled ? 'Disable this channel' : 'Enable this channel';
+  const toggleStyle = enabled
+    ? 'padding:2px 8px;border-radius:6px;border:1px solid rgba(16,185,129,.3);background:rgba(16,185,129,.1);color:var(--green);font-size:.7rem;font-weight:700;cursor:pointer;font-family:\'Outfit\',sans-serif;'
+    : 'padding:2px 8px;border-radius:6px;border:1px solid var(--border);background:rgba(255,255,255,.04);color:var(--muted);font-size:.7rem;font-weight:700;cursor:pointer;font-family:\'Outfit\',sans-serif;';
+  const toggleLabel = enabled ? '🟢' : '⚫';
   row.innerHTML =
     `<span style="font-size:.72rem;font-weight:600;color:${color};flex:1;">${dot} #${esc(name)}</span>` +
+    `<button onclick="toggleIncenseChannel('${esc(channelId)}')" title="${toggleTitle}"
+      style="${toggleStyle}">${toggleLabel}</button>` +
     `<button onclick="removeIncenseChannel('${esc(channelId)}')" title="Remove channel"
       style="padding:2px 8px;border-radius:6px;border:1px solid rgba(239,68,68,.3);background:rgba(239,68,68,.08);
       color:var(--red);font-size:.7rem;font-weight:700;cursor:pointer;font-family:'Outfit',sans-serif;">✕</button>`;
+}
+
+function toggleIncenseChannel(channelId) {
+  send({ type: 'toggle_incense_channel', data: { channelId } });
+}
+
+function applyIncenseChannelToggled(d) {
+  if (d.enabled) {
+    incenseDisabled.delete(d.channelId);
+  } else {
+    incenseDisabled.add(d.channelId);
+  }
+  const entry = incenseMap[d.channelId];
+  if (entry) renderIncenseRow(d.channelId, entry.name || entry.channelId, entry.active);
 }
 
 function addIncenseChannel() {
@@ -980,6 +1010,27 @@ function addIncenseChannel() {
 function removeIncenseChannel(channelId) {
   if (!confirm(`Remove incense channel ${channelId}?`)) return;
   send({ type: 'remove_incense_channel', data: { channelId } });
+}
+
+// ── AUTO-BUY INCENSE ──────────────────────────────────────────────────────────
+function toggleAutoBuyIncense() {
+  send({ type: 'toggle_auto_buy_incense' });
+}
+
+function applyAutoBuyIncense(d) {
+  const btn = E('btn-auto-buy');
+  if (!btn) return;
+  const on = !!d.active;
+  btn.textContent = on ? '🌿 Auto-buy: ON' : '🌿 Auto-buy: OFF';
+  if (on) {
+    btn.style.borderColor  = 'rgba(16,185,129,.3)';
+    btn.style.background   = 'rgba(16,185,129,.1)';
+    btn.style.color        = 'var(--green)';
+  } else {
+    btn.style.borderColor  = 'var(--border)';
+    btn.style.background   = 'rgba(255,255,255,.04)';
+    btn.style.color        = 'var(--muted)';
+  }
 }
 
 // ── CATCH SPEED ───────────────────────────────────────────────────────────────

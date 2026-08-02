@@ -331,7 +331,7 @@ let transferActive = false;
 
 wss.on('connection', ws => {
     const rates = calculateRates();
-    ws.send(JSON.stringify({ type: 'init', data: { ...stats, catchMode, catchSpeed, captchaAlertTarget, autoBuyIncense, competitors: Object.values(competitors), ...rates, history } }));
+    ws.send(JSON.stringify({ type: 'init', data: { ...stats, catchMode, catchSpeed, captchaAlertTarget, autoBuyIncense, disabledIncenseChannels: [...disabledIncenseChannels], competitors: Object.values(competitors), ...rates, history } }));
     ws.on('message', raw => {
         try {
             const msg = JSON.parse(raw);
@@ -453,6 +453,23 @@ wss.on('connection', ws => {
                 broadcast('incense_removed', { channelId: id });
                 broadcast('log', { text: `🗑️ Removed incense channel ${ch ? '#' + ch.name : id}`, level: 'warn' });
                 logEvent(`Incense channel removed: ${id}`, 'warn');
+            }
+            if (msg.type === 'toggle_incense_channel') {
+                const id = msg.data?.channelId?.trim();
+                if (!id) return;
+                const wasDisabled = disabledIncenseChannels.has(id);
+                if (wasDisabled) {
+                    disabledIncenseChannels.delete(id);
+                } else {
+                    disabledIncenseChannels.add(id);
+                }
+                const enabled = !disabledIncenseChannels.has(id);
+                config.disabledIncenseChannels = [...disabledIncenseChannels];
+                require('fs').writeFileSync('./config.json', JSON.stringify(config, null, 2));
+                const ch = client.channels.cache.get(id);
+                broadcast('incense_channel_toggled', { channelId: id, enabled });
+                broadcast('log', { text: `${enabled ? '🟢' : '⚫'} Incense channel ${ch ? '#' + ch.name : id} ${enabled ? 'enabled' : 'disabled'}`, level: enabled ? 'success' : 'warn' });
+                logEvent(`Incense channel ${id} ${enabled ? 'enabled' : 'disabled'}`, 'info');
             }
         } catch (_) {}
     });
@@ -668,6 +685,7 @@ function humanDelay() { return getDelay(); }
 //  - Stop: "@Pokétwo stopincense"
 //  - Cannot stack in same channel. Can run multiple channels at once.
 const incenseActive = {}; // channelId → bool
+const disabledIncenseChannels = new Set(config.disabledIncenseChannels || []);
 let autoBuyIncense = config.autoBuyIncense !== false; // default true
 
 async function checkIncenseStatus(channel) {
@@ -705,6 +723,10 @@ async function checkIncenseStatus(channel) {
 async function buyIncense(channel) {
     if (!autoBuyIncense) {
         logEvent(`Auto-buy incense OFF — skipping #${channel.name}`, 'info');
+        return;
+    }
+    if (disabledIncenseChannels.has(channel.id)) {
+        logEvent(`Incense disabled for #${channel.name} — skipping buy`, 'info');
         return;
     }
     logEvent(`Buying incense in #${channel.name}... (costs 50 shards / 10,000 PC)`, 'info');
@@ -773,6 +795,7 @@ async function refreshIncense(incenseChannels) {
 function startIncenseSpam(ch) {
     (function loop() {
         if (isSleeping) { setTimeout(loop, 3000); return; }
+        if (disabledIncenseChannels.has(ch.id)) { setTimeout(loop, 5000); return; }
         if (!incenseActive[ch.id]) { setTimeout(loop, 10000); return; }
         ch.send(Math.random().toString(36).substring(2, 15) + ' ').catch(() => {});
         setTimeout(loop, Math.floor(Math.random() * 3000) + 2000);
@@ -891,6 +914,33 @@ client.on('messageCreate', async message => {
         if (!uid) { message.channel.send('Usage: `$transferall <userID>`'); return; }
         message.channel.send(`Starting transfer to <@${uid}> — they must accept the trade!`);
         startTransfer(message.channel, uid);
+    }
+
+    // ── Incense pause / resume detection (runs even while sleeping) ──────────
+    if (message.author.id === '716390085896962058') {
+        const txt = message.content || '';
+        if (txt.includes('Incense has been paused.')) {
+            const chId = message.channel.id;
+            incenseActive[chId] = false;
+            broadcast('incense', { channelId: chId, name: message.channel.name, active: false });
+            logEvent(`⏸ Incense paused in #${message.channel.name}`, 'warn');
+            broadcast('log', { text: `⏸ Incense paused in #${message.channel.name}`, level: 'warn' });
+            if (autoBuyIncense && !disabledIncenseChannels.has(chId)) {
+                setTimeout(async () => {
+                    await message.channel.send('<@716390085896962058> incense resume').catch(() => {});
+                    logEvent(`↩️ Sent incense resume in #${message.channel.name}`, 'info');
+                }, 2000);
+            }
+            return;
+        }
+        if (txt.includes('Incense has been resumed.')) {
+            const chId = message.channel.id;
+            incenseActive[chId] = true;
+            broadcast('incense', { channelId: chId, name: message.channel.name, active: true });
+            logEvent(`▶️ Incense resumed in #${message.channel.name}`, 'success');
+            broadcast('log', { text: `▶️ Incense resumed in #${message.channel.name}`, level: 'success' });
+            return;
+        }
     }
 
     if (isSleeping) return;
