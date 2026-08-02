@@ -501,7 +501,13 @@ body.glass-mode .mod > * { position: relative; z-index: 12; }
   </div>
 
   <div class="mod qi-mod" style="grid-column:span 4;">
-    <div class="mod-hd">Quest &amp; Incense</div>
+    <div class="mod-hd">Quest &amp; Incense
+      <button id="btn-auto-buy" onclick="toggleAutoBuyIncense()"
+        title="Auto-buy incense when it expires"
+        style="padding:3px 10px;border-radius:7px;border:1px solid rgba(16,185,129,.3);background:rgba(16,185,129,.1);color:var(--green);font-size:.7rem;font-weight:700;cursor:pointer;font-family:'Outfit',sans-serif;transition:all .2s;">
+        🌿 Auto-buy: ON
+      </button>
+    </div>
     <div class="qi-inner">
       <div>
         <div class="qi-row">

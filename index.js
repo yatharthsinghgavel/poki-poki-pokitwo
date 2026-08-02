@@ -35,21 +35,54 @@ let catchMode  = 'direct'; // 'direct' | 'hint'
 let captchaAlertTarget = config.captchaAlertTarget || null;
 // shape: { type: 'channel'|'dm'|'group', id: string }
 
-async function forwardCaptchaAlert(time) {
+async function forwardCaptchaAlert(time, sourceMessage = null) {
     if (!captchaAlertTarget?.id) return;
-    const msg = `🚨 **CAPTCHA DETECTED** at ${time}\nYour Poketwo Autocatcher has paused. Solve it in Discord then click ✅ in the dashboard or type \`$captcha_completed\`.`;
+
+    // Build the jump URL and message reference info if we have the source message
+    const jumpURL   = sourceMessage ? `https://discord.com/channels/${sourceMessage.guildId || '@me'}/${sourceMessage.channel.id}/${sourceMessage.id}` : null;
+    const sourceRef = sourceMessage
+        ? `\n\n📍 **Jump to captcha:** ${jumpURL}\n🆔 Message ID: \`${sourceMessage.id}\` | Channel: <#${sourceMessage.channel.id}>`
+        : '';
+
+    const text = `🚨 **CAPTCHA DETECTED** at ${time}\nYour Poketwo Autocatcher has paused. Solve it in Discord then click ✅ in the dashboard or type \`$captcha_completed\`.${sourceRef}`;
+
     try {
+        let targetChannel = null;
+
         if (captchaAlertTarget.type === 'dm') {
             const user = await client.users.fetch(captchaAlertTarget.id);
-            const dm   = await user.createDM();
-            await dm.send(msg);
+            targetChannel = await user.createDM();
         } else {
-            // channel or group DM — both resolved via channels cache
-            const ch = client.channels.cache.get(captchaAlertTarget.id)
-                    || await client.channels.fetch(captchaAlertTarget.id).catch(() => null);
-            if (ch) await ch.send(msg);
-            else logEvent(`Captcha alert: channel ${captchaAlertTarget.id} not found`, 'warn');
+            targetChannel = client.channels.cache.get(captchaAlertTarget.id)
+                         || await client.channels.fetch(captchaAlertTarget.id).catch(() => null);
         }
+
+        if (!targetChannel) {
+            logEvent(`Captcha alert: target ${captchaAlertTarget.id} not found`, 'warn');
+            return;
+        }
+
+        // Try to forward (message reference / reply) the original captcha message
+        // Discord forward = send with messageReference. Only works if source is in a guild channel.
+        let sent = false;
+        if (sourceMessage && sourceMessage.guild && captchaAlertTarget.type !== 'dm') {
+            try {
+                await targetChannel.send({
+                    content: `🚨 **CAPTCHA DETECTED** at ${time} — bot paused. Solve in Discord then confirm in dashboard.`,
+                    messageReference: { messageId: sourceMessage.id, channelId: sourceMessage.channel.id, guildId: sourceMessage.guildId, failIfNotExists: false },
+                    allowedMentions: { repliedUser: false },
+                });
+                sent = true;
+            } catch (_) {
+                // forward failed — fall through to plain message
+            }
+        }
+
+        if (!sent) {
+            // Plain message with jump link + IDs
+            await targetChannel.send(text);
+        }
+
         logEvent(`📨 Captcha alert forwarded to ${captchaAlertTarget.type} ${captchaAlertTarget.id}`, 'info');
     } catch (e) {
         logEvent(`Captcha alert forward failed: ${e}`, 'error');
@@ -298,7 +331,7 @@ let transferActive = false;
 
 wss.on('connection', ws => {
     const rates = calculateRates();
-    ws.send(JSON.stringify({ type: 'init', data: { ...stats, catchMode, catchSpeed, captchaAlertTarget, competitors: Object.values(competitors), ...rates, history } }));
+    ws.send(JSON.stringify({ type: 'init', data: { ...stats, catchMode, catchSpeed, captchaAlertTarget, autoBuyIncense, competitors: Object.values(competitors), ...rates, history } }));
     ws.on('message', raw => {
         try {
             const msg = JSON.parse(raw);
@@ -355,6 +388,14 @@ wss.on('connection', ws => {
                 const ch = client.channels.cache.get(channelId);
                 if (!ch) { broadcast('log', { text: `❌ Channel ${channelId} not found.`, level: 'error' }); return; }
                 startTransfer(ch, targetId);
+            }
+            if (msg.type === 'toggle_auto_buy_incense') {
+                autoBuyIncense = !autoBuyIncense;
+                config.autoBuyIncense = autoBuyIncense;
+                require('fs').writeFileSync('./config.json', JSON.stringify(config, null, 2));
+                broadcast('auto_buy_incense', { active: autoBuyIncense });
+                broadcast('log', { text: autoBuyIncense ? '🌿 Auto-buy incense ON' : '🌿 Auto-buy incense OFF — will monitor but not purchase', level: autoBuyIncense ? 'success' : 'warn' });
+                logEvent(`Auto-buy incense: ${autoBuyIncense ? 'ON' : 'OFF'}`, 'info');
             }
             if (msg.type === 'test_captcha_alert') {
                 if (!captchaAlertTarget?.id) {
@@ -621,12 +662,13 @@ function humanDelay() { return getDelay(); }
 
 // ─── INCENSE MANAGER ─────────────────────────────────────────────────────────
 // Key facts:
-//  - "@Pokétwo incense buy" must be sent IN the channel you want incense in
+//  - "@Pokétwo incense buy --confirm" must be sent IN the channel (--confirm skips the prompt)
 //  - Costs 50 shards. To buy shards: "@Pokétwo buy shard 50" (costs 10,000 PC)
 //  - Spawns every 20s for 1 hour (180 spawns total)
 //  - Stop: "@Pokétwo stopincense"
 //  - Cannot stack in same channel. Can run multiple channels at once.
 const incenseActive = {}; // channelId → bool
+let autoBuyIncense = config.autoBuyIncense !== false; // default true
 
 async function checkIncenseStatus(channel) {
     try {
@@ -661,19 +703,32 @@ async function checkIncenseStatus(channel) {
 }
 
 async function buyIncense(channel) {
+    if (!autoBuyIncense) {
+        logEvent(`Auto-buy incense OFF — skipping #${channel.name}`, 'info');
+        return;
+    }
     logEvent(`Buying incense in #${channel.name}... (costs 50 shards / 10,000 PC)`, 'info');
     try {
-        // buy incense must be sent in the target channel — Pokétwo ties it to that channel
-        // Command migrated: old "buy incense" → new "incense buy"
-        await channel.send(`<@716390085896962058> incense buy`);
-        // Wait for Pokétwo's confirm button and click it
+        // Use --confirm flag to bypass the "Are you sure?" prompt automatically.
+        // If Pokétwo still shows a button, click it as fallback.
+        await channel.send(`<@716390085896962058> incense buy --confirm`);
+        // Small wait then check for any confirmation button that may still appear
         await new Promise((resolve) => {
-            const col = new Discord.MessageCollector(channel, m => m.author.id === '716390085896962058', { time: 15000 });
+            const col = new Discord.MessageCollector(channel, m => m.author.id === '716390085896962058', { time: 8000 });
             col.on('collect', async m => {
+                const txt = (m.content + (m.embeds?.[0]?.description || '')).toLowerCase();
                 if (m.components?.length > 0) {
-                    try { await m.clickButton(); } catch (_) {}
+                    // click the first confirm/yes button
+                    try {
+                        const btn = m.components[0]?.components?.find(c =>
+                            c.label?.toLowerCase().includes('yes') ||
+                            c.label?.toLowerCase().includes('confirm') ||
+                            c.style === 3 // SUCCESS style = green button
+                        );
+                        await m.clickButton(btn?.customId || undefined);
+                    } catch (_) {}
                     col.stop(); resolve();
-                } else if (m.content.toLowerCase().includes('incense')) {
+                } else if (txt.includes('incense') || txt.includes('activated') || txt.includes('active')) {
                     col.stop(); resolve();
                 }
             });
@@ -849,7 +904,7 @@ client.on('messageCreate', async message => {
         broadcast('captcha', { time: captchaTime });
         broadcast('status', { status: 'captcha', sleeping: true });
         broadcast('stats', { caught: stats.caught, missed: stats.missed, captchas: stats.captchas, spawns: stats.spawns, pc: stats.pc, ...calculateRates() });
-        forwardCaptchaAlert(captchaTime);
+        forwardCaptchaAlert(captchaTime, message);
         setTimeout(() => { isSleeping = false; stats.botStatus = 'online'; broadcast('status', { status: 'online', sleeping: false }); logEvent('Auto-resumed (5h timeout).', 'info'); }, 18000000);
         return;
     }
