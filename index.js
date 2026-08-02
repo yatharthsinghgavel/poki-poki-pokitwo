@@ -1,6 +1,8 @@
 /*
  * Poketwo-Autocatcher
- * Version: V1.6.0
+ * Version: V1.6.2
+ * Changelog: pokemon/min, pokemon/hour, PC/min, PC/hour rate tracking;
+ *            history snapshots every 60s; /stats window with Chart.js graphs
  * Repo: https://github.com/yatharthsinghgavel/poki-poki-pokitwo
  *
  * KEY FACTS (researched from official docs):
@@ -66,7 +68,7 @@ function enqueueCatch(name, fn) {
     stats.spawns++;
     broadcast('stats', { caught: stats.caught, missed: stats.missed,
                          captchas: stats.captchas, spawns: stats.spawns,
-                         pc: stats.pc, queueSize: catchQueue.length });
+                         pc: stats.pc, queueSize: catchQueue.length, ...calculateRates() });
     processCatchQueue();
 }
 
@@ -112,6 +114,7 @@ if (Number(process.version.slice(1).split('.')[0]) < 8)
 
 app.use(express.static(path.join(__dirname, 'dashboard')));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'dashboard', 'index.html')));
+app.get('/stats', (req, res) => res.sendFile(path.join(__dirname, 'dashboard', 'stats.html')));
 
 // ─── STATS ───────────────────────────────────────────────────────────────────
 // PC milestones per-pokemon: key = catchCount → PC earned at that milestone
@@ -138,6 +141,83 @@ const stats = {
     incenseStatus: {}, // channelId → { active, name, spawnsLeft }
 };
 
+// ─── RATE TRACKING ───────────────────────────────────────────────────────────
+// Rolling arrays of timestamps (ms) for the last 60 minutes of catches/PC.
+// Every catch pushes { ts, pc } into these arrays.
+// calculateRates() trims old entries and derives per-min / per-hour values.
+const rateWindow = []; // { ts: Number, pc: Number }
+
+function pushRate(pc) {
+    rateWindow.push({ ts: Date.now(), pc });
+}
+
+function calculateRates() {
+    const now   = Date.now();
+    const MIN1  = 60 * 1000;
+    const HOUR1 = 60 * MIN1;
+
+    // Trim entries older than 1 hour
+    while (rateWindow.length > 0 && now - rateWindow[0].ts > HOUR1) rateWindow.shift();
+
+    const lastMin  = rateWindow.filter(e => now - e.ts <= MIN1);
+    const lastHour = rateWindow; // already trimmed to 1h
+
+    const pokemonPerMin  = lastMin.length;
+    const pokemonPerHour = lastHour.length;
+    const pcPerMin       = lastMin.reduce((s, e) => s + e.pc, 0);
+    const pcPerHour      = lastHour.reduce((s, e) => s + e.pc, 0);
+
+    // Session-level averages (since boot)
+    const sessionSecs = (now - stats.startTime) / 1000;
+    const sessionMins = sessionSecs / 60;
+    const avgPerMin   = sessionMins > 0 ? +(stats.caught / sessionMins).toFixed(2) : 0;
+    const avgPerHour  = +(avgPerMin * 60).toFixed(1);
+
+    return { pokemonPerMin, pokemonPerHour, pcPerMin, pcPerHour, avgPerMin, avgPerHour };
+}
+
+// Broadcast rate snapshot every 10 seconds
+let rateInterval = null;
+function startRateBroadcast() {
+    if (rateInterval) return;
+    rateInterval = setInterval(() => {
+        const rates = calculateRates();
+        broadcast('rates', rates);
+    }, 10000);
+}
+
+// ─── HISTORY SNAPSHOTS (for graphs) ──────────────────────────────────────────
+// Every 60 seconds record a data point so the Stats page can draw time-series graphs.
+const history = {
+    labels:          [], // HH:MM strings
+    caught:          [],
+    pc:              [],
+    pokemonPerMin:   [],
+    pcPerMin:        [],
+};
+const MAX_HISTORY = 60; // keep last 60 minutes of snapshots
+
+function recordHistorySnapshot() {
+    const now   = new Date();
+    const label = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const rates = calculateRates();
+
+    history.labels.push(label);
+    history.caught.push(stats.caught);
+    history.pc.push(stats.pc);
+    history.pokemonPerMin.push(rates.pokemonPerMin);
+    history.pcPerMin.push(rates.pcPerMin);
+
+    // Trim to last MAX_HISTORY points
+    ['labels','caught','pc','pokemonPerMin','pcPerMin'].forEach(k => {
+        if (history[k].length > MAX_HISTORY) history[k].shift();
+    });
+
+    broadcast('history', history);
+}
+
+setInterval(recordHistorySnapshot, 60000);
+
 function broadcast(type, data) {
     const payload = JSON.stringify({ type, data, ts: Date.now() });
     wss.clients.forEach(ws => {
@@ -151,6 +231,7 @@ function trackPC(pokemonName) {
     const pc = PC_MILESTONES[n] || 35; // base 35 PC per catch
     totalPCEarned += pc;
     stats.pc = totalPCEarned;
+    pushRate(pc); // record for rate calculations
     // Quest progress broadcast
     const totalCaught = stats.caught;
     const nextQuest = QUEST_MILESTONES.find(q => q.target > totalCaught);
@@ -172,7 +253,8 @@ function trackPC(pokemonName) {
 let transferActive = false;
 
 wss.on('connection', ws => {
-    ws.send(JSON.stringify({ type: 'init', data: { ...stats, catchMode, competitors: Object.values(competitors) } }));
+    const rates = calculateRates();
+    ws.send(JSON.stringify({ type: 'init', data: { ...stats, catchMode, competitors: Object.values(competitors), ...rates, history } }));
     ws.on('message', raw => {
         try {
             const msg = JSON.parse(raw);
@@ -217,6 +299,7 @@ wss.on('connection', ws => {
 
 server.listen(process.env.PORT || 3000, () => {
     console.log(`Dashboard: http://localhost:${process.env.PORT || 3000}`);
+    startRateBroadcast();
 });
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
@@ -258,11 +341,12 @@ function addCatch(name, rarity, guild, channel) {
     stats.caught++;
     stats.recentCatches.unshift(entry);
     if (stats.recentCatches.length > 50) stats.recentCatches.pop();
-    trackPC(name);
+    trackPC(name); // trackPC calls pushRate internally now
     broadcast('catch', entry);
+    const rates = calculateRates();
     broadcast('stats', { caught: stats.caught, missed: stats.missed,
                          captchas: stats.captchas, spawns: stats.spawns,
-                         pc: stats.pc, queueSize: catchQueue.length });
+                         pc: stats.pc, queueSize: catchQueue.length, ...rates });
 }
 
 function logEvent(text, level = 'info') {
@@ -581,7 +665,7 @@ client.on('messageCreate', async message => {
         logEvent(`Boost mode toggled: ${boostMode ? 'ON' : 'OFF'}`, 'warn');
     }
     if (message.content === '$help' && message.author.id === config.OwnerID) {
-        message.channel.send('```\nPoketwo-Autocatcher v1.6.0\n' +
+        message.channel.send('```\nPoketwo-Autocatcher v1.6.2\n' +
             '$captcha_completed — resume after captcha\n' +
             '$boost             — toggle boost mode (fast catch)\n' +
             '$say <text>        — send a message\n' +
@@ -623,7 +707,7 @@ client.on('messageCreate', async message => {
         logEvent('⚠️ CAPTCHA DETECTED', 'warn');
         broadcast('captcha', { time: new Date().toLocaleTimeString() });
         broadcast('status', { status: 'captcha', sleeping: true });
-        broadcast('stats', { caught: stats.caught, missed: stats.missed, captchas: stats.captchas, spawns: stats.spawns, pc: stats.pc });
+        broadcast('stats', { caught: stats.caught, missed: stats.missed, captchas: stats.captchas, spawns: stats.spawns, pc: stats.pc, ...calculateRates() });
         setTimeout(() => { isSleeping = false; stats.botStatus = 'online'; broadcast('status', { status: 'online', sleeping: false }); logEvent('Auto-resumed (5h timeout).', 'info'); }, 18000000);
         return;
     }
@@ -634,7 +718,7 @@ client.on('messageCreate', async message => {
         if (rate > 0.4 && (stats.caught + stats.missed) > 10)
             broadcast('warning', { type: 'miss_rate', msg: `⚠️ Miss rate ${Math.round(rate*100)}% — name detection may be off`, level: 'warn' });
         logEvent('Wrong Pokémon — missed.', 'warn');
-        broadcast('stats', { caught: stats.caught, missed: stats.missed, captchas: stats.captchas, spawns: stats.spawns, pc: stats.pc });
+        broadcast('stats', { caught: stats.caught, missed: stats.missed, captchas: stats.captchas, spawns: stats.spawns, pc: stats.pc, ...calculateRates() });
         if (catchMode === 'hint') message.channel.send(`<@716390085896962058> h`);
         return;
     }

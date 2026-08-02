@@ -358,6 +358,9 @@
     </label>
     <button onclick="testAlarm()" style="background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.3);color:#ef4444;border-radius:8px;padding:5px 12px;font-size:.8rem;font-weight:600;cursor:pointer;font-family:'Outfit',sans-serif;" title="Test the captcha alarm sound">🔊 Test</button>
 
+    <!-- STATS WINDOW LINK -->
+    <a href="/stats" target="_blank" style="display:inline-flex;align-items:center;gap:7px;padding:6px 14px;background:rgba(99,102,241,.15);border:1px solid rgba(99,102,241,.3);color:var(--accent);border-radius:8px;font-size:.82rem;font-weight:600;text-decoration:none;cursor:pointer;font-family:'Outfit',sans-serif;" title="Open live Stats &amp; Graphs in a new window">📊 Stats</a>
+
     <!-- BOT STATUS -->
     <div id="status-badge" class="offline">
       <div class="dot"></div>
@@ -417,6 +420,43 @@
     <div id="stat-incense" style="font-size:.82rem;color:var(--subtle);margin-top:6px;display:flex;gap:10px;flex-wrap:wrap;">
       <span>Checking...</span>
     </div>
+  </div>
+
+  <!-- RATE CARDS -->
+  <div class="stat-card green">
+    <div class="stat-label">Pokémon / min</div>
+    <div class="stat-value green" id="stat-ppm">—</div>
+    <div class="stat-sub">last 60 seconds</div>
+  </div>
+
+  <div class="stat-card green">
+    <div class="stat-label">Pokémon / hour</div>
+    <div class="stat-value green" id="stat-pph">—</div>
+    <div class="stat-sub">last 60 minutes</div>
+  </div>
+
+  <div class="stat-card indigo">
+    <div class="stat-label">PC / min</div>
+    <div class="stat-value indigo" id="stat-pcm">—</div>
+    <div class="stat-sub">last 60 seconds</div>
+  </div>
+
+  <div class="stat-card indigo">
+    <div class="stat-label">PC / hour</div>
+    <div class="stat-value indigo" id="stat-pch">—</div>
+    <div class="stat-sub">last 60 minutes</div>
+  </div>
+
+  <div class="stat-card yellow">
+    <div class="stat-label">Avg / min</div>
+    <div class="stat-value yellow" id="stat-avgm" style="font-size:1.4rem;margin-top:2px;">—</div>
+    <div class="stat-sub">session average</div>
+  </div>
+
+  <div class="stat-card cyan">
+    <div class="stat-label">Avg / hour</div>
+    <div class="stat-value cyan" id="stat-avgh" style="font-size:1.4rem;margin-top:2px;">—</div>
+    <div class="stat-sub">projected</div>
   </div>
 
   <!-- LIVE TICKER & ANTI-DETECTION QUEUE BAR -->
@@ -631,6 +671,9 @@ function handleEvent(msg) {
     case 'incense':
       handleIncenseUpdate(msg.data);
       break;
+    case 'rates':
+      updateStats(msg.data);
+      break;
   }
 }
 
@@ -654,6 +697,14 @@ function applyInit(data) {
   if (data.pc !== undefined) document.getElementById('stat-pc').textContent = data.pc.toLocaleString();
   if (data.boostMode !== undefined) handleBoostUpdate({ active: data.boostMode });
 
+  // Rate cards
+  if (data.pokemonPerMin  !== undefined) document.getElementById('stat-ppm').textContent  = data.pokemonPerMin;
+  if (data.pokemonPerHour !== undefined) document.getElementById('stat-pph').textContent  = data.pokemonPerHour;
+  if (data.pcPerMin       !== undefined) document.getElementById('stat-pcm').textContent  = data.pcPerMin.toLocaleString();
+  if (data.pcPerHour      !== undefined) document.getElementById('stat-pch').textContent  = data.pcPerHour.toLocaleString();
+  if (data.avgPerMin      !== undefined) document.getElementById('stat-avgm').textContent = data.avgPerMin;
+  if (data.avgPerHour     !== undefined) document.getElementById('stat-avgh').textContent = data.avgPerHour;
+
   if (data.startTime) {
     startTime = data.startTime;
     startUptimeTimer();
@@ -670,6 +721,14 @@ function updateStats(data) {
   if (data.spawns   !== undefined)   document.getElementById('stat-spawns').textContent   = data.spawns;
   if (data.queueSize!== undefined)   document.getElementById('queue-count').textContent   = data.queueSize;
   if (data.pc       !== undefined)   document.getElementById('stat-pc').textContent       = data.pc.toLocaleString();
+
+  // Rate cards
+  if (data.pokemonPerMin  !== undefined) document.getElementById('stat-ppm').textContent  = data.pokemonPerMin;
+  if (data.pokemonPerHour !== undefined) document.getElementById('stat-pph').textContent  = data.pokemonPerHour;
+  if (data.pcPerMin       !== undefined) document.getElementById('stat-pcm').textContent  = data.pcPerMin.toLocaleString();
+  if (data.pcPerHour      !== undefined) document.getElementById('stat-pch').textContent  = data.pcPerHour.toLocaleString();
+  if (data.avgPerMin      !== undefined) document.getElementById('stat-avgm').textContent = data.avgPerMin;
+  if (data.avgPerHour     !== undefined) document.getElementById('stat-avgh').textContent = data.avgPerHour;
 
   const caught = parseInt(document.getElementById('stat-caught').textContent) || 0;
   const missed = parseInt(document.getElementById('stat-missed').textContent) || 0;

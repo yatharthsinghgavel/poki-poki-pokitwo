@@ -4,6 +4,23 @@ All notable changes to Poketwo Autocatcher are documented here.
 
 ---
 
+## [v1.6.2] — Live stats, rate tracking & Stats window
+- **Pokémon / min & / hour**: rolling 60-second and 60-minute catch rate shown on the main dashboard
+- **PC / min & / hour**: rolling pokécoin earn rate for both 1-minute and 1-hour windows
+- **Session averages**: avg pokemon/min and projected avg/hour since bot boot
+- **History snapshots**: every 60 seconds the bot records a data point (caught, PC, rates) for graph display
+- **Stats window** (`/stats`): standalone page accessible via 📊 Stats button in the header, showing:
+  - 6 live rate cards (poke/min, poke/hr, PC/min, PC/hr, avg/min, avg/hr)
+  - Pokémon caught cumulative line graph
+  - PC earned cumulative line graph
+  - Pokémon/min live rate graph
+  - PC/min live rate graph
+  - Combined dual-axis Pokémon vs PC rate graph
+- Dashboard main page gains 6 new stat cards with live rate data
+- `index.js` bumped to v1.6.2; `package.json` version synced
+
+---
+
 ## [v1.6.1] — Audio fixes & test button
 - Fixed AudioContext not unlocking on first user interaction (browser autoplay policy)
 - Added 🔊 Test button in dashboard header to preview alarm for 3 seconds
