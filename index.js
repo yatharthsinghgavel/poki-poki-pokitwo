@@ -329,6 +329,37 @@ wss.on('connection', ws => {
                 if (!ch) { broadcast('log', { text: `❌ Channel ${channelId} not found.`, level: 'error' }); return; }
                 startTransfer(ch, targetId);
             }
+            if (msg.type === 'add_incense_channel') {
+                const id = msg.data?.channelId?.trim();
+                if (!id) return;
+                if (config.incenseChannelIDs.includes(id)) {
+                    broadcast('log', { text: `⚠️ Channel ${id} is already in the incense list.`, level: 'warn' }); return;
+                }
+                const ch = client.channels.cache.get(id);
+                if (!ch) { broadcast('log', { text: `❌ Channel ${id} not found — check the ID.`, level: 'error' }); return; }
+                config.incenseChannelIDs.push(id);
+                require('fs').writeFileSync('./config.json', JSON.stringify(config, null, 2));
+                incenseActive[id] = false;
+                startIncenseSpam(ch);
+                broadcast('incense', { channelId: id, name: ch.name, active: false });
+                broadcast('log', { text: `🌿 Added incense channel #${ch.name} — starting…`, level: 'success' });
+                logEvent(`Incense channel added: #${ch.name} (${id})`, 'success');
+                setTimeout(async () => {
+                    const active = await checkIncenseStatus(ch);
+                    if (!active) { await sleep(1000); await buyIncense(ch); }
+                }, 2000);
+            }
+            if (msg.type === 'remove_incense_channel') {
+                const id = msg.data?.channelId?.trim();
+                if (!id) return;
+                config.incenseChannelIDs = config.incenseChannelIDs.filter(x => x !== id);
+                require('fs').writeFileSync('./config.json', JSON.stringify(config, null, 2));
+                delete incenseActive[id];
+                const ch = client.channels.cache.get(id);
+                broadcast('incense_removed', { channelId: id });
+                broadcast('log', { text: `🗑️ Removed incense channel ${ch ? '#' + ch.name : id}`, level: 'warn' });
+                logEvent(`Incense channel removed: ${id}`, 'warn');
+            }
         } catch (_) {}
     });
 });
