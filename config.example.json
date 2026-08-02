@@ -1,0 +1,14 @@
+{
+  "ocrSpaceApiKey": "YOUR_OCR_SPACE_API_KEY",
+  "spamChannelID": "YOUR_SPAM_CHANNEL_ID",
+  "incenseChannelIDs": [
+    "INCENSE_CHANNEL_ID_1",
+    "INCENSE_CHANNEL_ID_2",
+    "INCENSE_CHANNEL_ID_3",
+    "INCENSE_CHANNEL_ID_4"
+  ],
+  "logChannelID": "YOUR_LOG_CHANNEL_ID",
+  "errorChannelID": "YOUR_ERROR_CHANNEL_ID",
+  "OwnerID": "YOUR_DISCORD_USER_ID",
+  "TOKEN": "YOUR_DISCORD_ACCOUNT_TOKEN"
+}

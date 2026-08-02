@@ -60,6 +60,7 @@ Then open `config.json` and fill in each field:
 |---|---|
 | `TOKEN` | Your Discord account's user token ([how to get it](https://www.youtube.com/watch?v=3W9tAEsK7RM)) |
 | `spamChannelID` | Channel ID where the bot spams and catches Pokémon |
+| `incenseChannelIDs` | Array of up to 4 channel IDs for incense farming. Bot auto-checks, buys 2h incense at boot + every 2h, skips active channels |
 | `logChannelID` | Channel ID for caught Pokémon logs |
 | `errorChannelID` | Channel ID for error logs |
 | `OwnerID` | Your Discord user ID (right-click your name → Copy ID) |
@@ -132,6 +133,7 @@ You can also trigger this from the **Bulk Transfer** panel in the dashboard.
 
 | Version | Changes |
 |---|---|
+| v1.5.2 | Multi-incense channel support (up to 4), auto shard farming every 2h, auto buy + use 2h incense at boot and on schedule, skip channels with active incense |
 | v1.5.1 | Incense channel support — separate spam + catch channel for incense, auto-rebuy and re-use when incense runs out |
 | v1.5.0 | Added Direct Catching as default, 1-7s anti-detection human delay, anti-collision catch queue, Catch Mode Toggle on dashboard, and modernized glassmorphism UI |
 | v1.4.0 | Web dashboard, WebSocket events, pause/resume, bulk transfer, captcha audio alert |

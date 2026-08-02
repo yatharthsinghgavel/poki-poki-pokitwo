@@ -26,14 +26,8 @@ let catchBusy = false;
 let lastCatchTime = 0;
 
 function humanDelay() {
-    // Gaussian-ish random between 1000ms and 7000ms, clustered around 3-4s
-    const r1 = Math.random(), r2 = Math.random();
-    const gaussian = Math.sqrt(-2 * Math.log(r1)) * Math.cos(2 * Math.PI * r2);
-    const base = 4000; // center
-    const spread = 1500;
-    let ms = Math.round(base + gaussian * spread);
-    ms = Math.max(1000, Math.min(7000, ms)); // clamp 1-7s
-    return ms;
+    // Fast mode: 300-6500ms — beats public version while looking human
+    return Math.floor(Math.random() * 6200) + 300;
 }
 
 async function processCatchQueue() {
@@ -44,9 +38,9 @@ async function processCatchQueue() {
         const job = catchQueue.shift();
         broadcast('queue', { size: catchQueue.length, processing: job.name });
 
-        // Ensure minimum gap from last catch (at least 2s between any two catch commands)
+        // Ensure minimum gap from last catch (at least 300ms between any two catch commands)
         const elapsed = Date.now() - lastCatchTime;
-        const minGap = 2000 + Math.floor(Math.random() * 1000); // 2-3s minimum gap
+        const minGap = 300 + Math.floor(Math.random() * 200); // 300-500ms minimum gap
         if (elapsed < minGap) {
             await sleep(minGap - elapsed);
         }
@@ -395,6 +389,117 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 //--------------------------------------------------------------//
 
+//------------------------- INCENSE MANAGER --------------------------------//
+
+// Tracks which incense channels currently have active incense
+const incenseActive = {}; // channelId -> true/false
+
+// Check a single incense channel by sending @Pokétwo incense and reading response
+async function checkIncenseStatus(channel) {
+    try {
+        await channel.send(`<@716390085896962058> incense`);
+        await sleep(3000);
+        const msgs = await channel.messages.fetch({ limit: 5 });
+        for (const [, m] of msgs) {
+            if (m.author.id !== '716390085896962058') continue;
+            const txt = (m.content + (m.embeds[0]?.description || '') + (m.embeds[0]?.footer?.text || '')).toLowerCase();
+            if (txt.includes('active') || txt.includes('spawns remaining') || txt.includes('incense is active')) {
+                incenseActive[channel.id] = true;
+                logEvent(`Incense check #${channel.name}: ACTIVE ✅`, 'success');
+                return true;
+            }
+            if (txt.includes('no active') || txt.includes('not active') || txt.includes('you don') || txt.includes('inactive')) {
+                incenseActive[channel.id] = false;
+                logEvent(`Incense check #${channel.name}: inactive`, 'info');
+                return false;
+            }
+        }
+        // Couldn't determine — assume inactive to be safe
+        incenseActive[channel.id] = false;
+        return false;
+    } catch (e) {
+        logEvent(`Incense check error on #${channel.name}: ${e}`, 'error');
+        incenseActive[channel.id] = false;
+        return false;
+    }
+}
+
+// Buy shards then buy + use 2h incense in a channel
+async function buyAndUseIncense(channel) {
+    logEvent(`Buying 2h incense in #${channel.name}...`, 'info');
+    try {
+        // Buy 2h incense (costs shards — item ID for 2h incense is "incense2")
+        await channel.send(`<@716390085896962058> buy incense2`);
+        await sleep(2500);
+        await channel.send(`<@716390085896962058> use incense`);
+        await sleep(2000);
+        incenseActive[channel.id] = true;
+        logEvent(`2h incense activated in #${channel.name} ✅`, 'success');
+        broadcast('log', { text: `🌿 2h incense activated in #${channel.name}`, level: 'success' });
+    } catch (e) {
+        logEvent(`Failed to buy/use incense in #${channel.name}: ${e}`, 'error');
+    }
+}
+
+// Farm shards in the spam channel before buying incense
+async function farmShards() {
+    const spamCh = client.channels.cache.get(config.spamChannelID);
+    if (!spamCh) return;
+    logEvent('Farming shards...', 'info');
+    try {
+        await spamCh.send(`<@716390085896962058> sh`); // check shard balance
+        await sleep(2000);
+    } catch (e) {
+        logEvent(`Shard farm error: ${e}`, 'error');
+    }
+}
+
+// On boot: check each incense channel — skip active ones, buy for inactive ones
+async function initIncense(incenseChannels) {
+    logEvent('Checking incense status on all channels at startup...', 'info');
+    for (const ch of incenseChannels) {
+        await sleep(1500);
+        const active = await checkIncenseStatus(ch);
+        if (!active) {
+            await sleep(1000);
+            await buyAndUseIncense(ch);
+        }
+    }
+    logEvent('Incense init complete.', 'success');
+}
+
+// Every 2h: farm shards, then check each channel and rebuy where needed
+async function scheduledIncenseRefresh(incenseChannels) {
+    await farmShards();
+    await sleep(3000);
+    for (const ch of incenseChannels) {
+        await sleep(1500);
+        const active = await checkIncenseStatus(ch);
+        if (!active) {
+            await sleep(1000);
+            await buyAndUseIncense(ch);
+        } else {
+            logEvent(`Skipping #${ch.name} — incense still active`, 'info');
+        }
+    }
+}
+
+// Spam a single incense channel continuously
+function startIncenseSpam(ch) {
+    function incenseSpam() {
+        if (isSleeping) { setTimeout(incenseSpam, 3000); return; }
+        // Only spam if incense is active in this channel
+        if (!incenseActive[ch.id]) { setTimeout(incenseSpam, 10000); return; }
+        const result = Math.random().toString(36).substring(2, 15);
+        ch.send(result + " ").catch(() => {});
+        const interval = Math.floor(Math.random() * 3000) + 2000; // 2-5s
+        setTimeout(incenseSpam, interval);
+    }
+    incenseSpam();
+}
+
+//--------------------------------------------------------------//
+
 client.on('ready', () => {
     stats.username = client.user.username;
     stats.botStatus = 'online';
@@ -404,12 +509,20 @@ client.on('ready', () => {
     broadcast('status', { status: 'online', sleeping: false, username: client.user.username });
 
     const channel = client.channels.cache.get(config.spamChannelID);
-    const incenseChannel = config.incenseChannelID ? client.channels.cache.get(config.incenseChannelID) : null;
+
+    // Resolve all incense channels (supports both old single ID and new array)
+    const incenseIDs = Array.isArray(config.incenseChannelIDs)
+        ? config.incenseChannelIDs
+        : (config.incenseChannelID ? [config.incenseChannelID] : []);
+    const incenseChannels = incenseIDs
+        .map(id => client.channels.cache.get(id))
+        .filter(Boolean);
 
     function getRandomInterval(min, max) {
         return Math.floor(Math.random() * (max - min + 1)) + min;
     }
 
+    // Main spam channel
     function spam() {
         const result = Math.random().toString(36).substring(2, 15);
         channel.send(result + "(Made by 🔥⃤•AK_ØPᵈᵉᵛ✓#6326) ");
@@ -418,17 +531,20 @@ client.on('ready', () => {
     }
     spam();
 
-    // Spam incense channel to trigger incense spawns (OCR catches, no Poke-Name needed)
-    if (incenseChannel) {
-        logEvent(`Incense channel active: #${incenseChannel.name}`, 'info');
-        function incenseSpam() {
-            if (isSleeping) { setTimeout(incenseSpam, 3000); return; }
-            const result = Math.random().toString(36).substring(2, 15);
-            incenseChannel.send(result + " ");
-            const randomInterval = getRandomInterval(2000, 5000);
-            setTimeout(incenseSpam, randomInterval);
+    if (incenseChannels.length > 0) {
+        logEvent(`Found ${incenseChannels.length} incense channel(s). Initialising...`, 'info');
+
+        // Start spam loop for each incense channel
+        for (const ch of incenseChannels) {
+            incenseActive[ch.id] = false; // default until checked
+            startIncenseSpam(ch);
         }
-        incenseSpam();
+
+        // Boot-up incense check — wait 5s for bot to fully settle first
+        setTimeout(() => initIncense(incenseChannels), 5000);
+
+        // Every 2 hours: farm shards + rebuy incense where needed
+        setInterval(() => scheduledIncenseRefresh(incenseChannels), 2 * 60 * 60 * 1000);
     }
 });
 
@@ -544,11 +660,18 @@ client.on('messageCreate', async message => {
                     await message.channel.send(`<@716390085896962058> h`);
                 }
                 if ((message.embeds[0]?.footer?.text == "Incense: Active.\nSpawns Remaining: 0.")) {
-                    logEvent('Incense ran out — rebuying...', 'warn');
-                    message.channel.send(`<@716390085896962058> buy incense`);
-                    await sleep(2000);
-                    message.channel.send(`<@716390085896962058> use incense`);
+                    logEvent(`Incense ran out in #${message.channel.name} — rebuying...`, 'warn');
+                    incenseActive[message.channel.id] = false;
+                    const ch = message.channel;
+                    await sleep(1000);
+                    await buyAndUseIncense(ch);
                 }
+            } else if (message.content?.toLowerCase().includes('incense has ended') ||
+                       message.content?.toLowerCase().includes('your incense has run out')) {
+                logEvent(`Incense ended in #${message.channel.name} — rebuying...`, 'warn');
+                incenseActive[message.channel.id] = false;
+                await sleep(1000);
+                await buyAndUseIncense(message.channel);
             } else if (catchMode === 'hint' && message.content.includes("The pokémon is")) {
                 // Hint mode: solve the hint from Pokétwo
                 try {
