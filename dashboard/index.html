@@ -975,11 +975,13 @@ function renderIncenseRow(channelId, name, active) {
     ? 'padding:2px 8px;border-radius:6px;border:1px solid rgba(16,185,129,.3);background:rgba(16,185,129,.1);color:var(--green);font-size:.7rem;font-weight:700;cursor:pointer;font-family:\'Outfit\',sans-serif;'
     : 'padding:2px 8px;border-radius:6px;border:1px solid var(--border);background:rgba(255,255,255,.04);color:var(--muted);font-size:.7rem;font-weight:700;cursor:pointer;font-family:\'Outfit\',sans-serif;';
   const toggleLabel = enabled ? '🟢' : '⚫';
+  // Use escJs() for channelId values injected into single-quoted JS onclick strings
+  // so a rogue apostrophe can never break out of the string literal.
   row.innerHTML =
     `<span style="font-size:.72rem;font-weight:600;color:${color};flex:1;">${dot} #${esc(name)}</span>` +
-    `<button onclick="toggleIncenseChannel('${esc(channelId)}')" title="${toggleTitle}"
+    `<button onclick="toggleIncenseChannel('${escJs(channelId)}')" title="${toggleTitle}"
       style="${toggleStyle}">${toggleLabel}</button>` +
-    `<button onclick="removeIncenseChannel('${esc(channelId)}')" title="Remove channel"
+    `<button onclick="removeIncenseChannel('${escJs(channelId)}')" title="Remove channel"
       style="padding:2px 8px;border-radius:6px;border:1px solid rgba(239,68,68,.3);background:rgba(239,68,68,.08);
       color:var(--red);font-size:.7rem;font-weight:700;cursor:pointer;font-family:'Outfit',sans-serif;">✕</button>`;
 }
@@ -995,7 +997,30 @@ function applyIncenseChannelToggled(d) {
     incenseDisabled.add(d.channelId);
   }
   const entry = incenseMap[d.channelId];
-  if (entry) renderIncenseRow(d.channelId, entry.name || entry.channelId, entry.active);
+  if (entry) {
+    renderIncenseRow(d.channelId, entry.name || entry.channelId, entry.active);
+  } else {
+    // incenseMap not yet populated (e.g. toggle fired before any incense broadcast).
+    // The Set is already updated above; directly patch the toggle button's visual
+    // so the row doesn't stay stale until the next incense event arrives.
+    const row = E(`inc-row-${d.channelId}`);
+    if (row) {
+      const btn = row.querySelector('button:first-of-type');
+      if (btn) {
+        if (d.enabled) {
+          btn.textContent = '🟢';
+          btn.style.borderColor  = 'rgba(16,185,129,.3)';
+          btn.style.background   = 'rgba(16,185,129,.1)';
+          btn.style.color        = 'var(--green)';
+        } else {
+          btn.textContent = '⚫';
+          btn.style.borderColor  = 'var(--border)';
+          btn.style.background   = 'rgba(255,255,255,.04)';
+          btn.style.color        = 'var(--muted)';
+        }
+      }
+    }
+  }
 }
 
 function addIncenseChannel() {
@@ -1321,6 +1346,13 @@ function esc(s) {
   return String(s)
     .replace(/&/g,'&amp;').replace(/</g,'&lt;')
     .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+// escJs: escape a value for embedding inside a single-quoted JS string literal
+// that lives inside an HTML attribute (e.g. onclick="fn('VALUE')").
+// Escapes backslash, single-quote, and HTML-encodes the result so it is safe
+// both as a JS string and as an HTML attribute value.
+function escJs(s) {
+  return esc(String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'"));
 }
 </script>
 

@@ -4,6 +4,34 @@ All notable changes to Poketwo Autocatcher are documented here.
 
 ---
 
+## [v1.7.0] — Auto-buy Incense, Per-channel Incense Toggle & Pause/Resume Detection
+
+### Auto-buy Incense wiring (dashboard + backend)
+- New **🌿 Auto-buy** toggle button in the Quest & Incense module header
+- Clicking toggles `autoBuyIncense` on the server, persists to `config.json`, and broadcasts `auto_buy_incense { active }` to all clients
+- Button reflects state: green border/background when ON, muted when OFF
+- Init payload includes `autoBuyIncense` so the button state is correct immediately on page load
+- `autoBuyIncense` defaults to `true` if not present in config (non-breaking)
+
+### Per-channel Incense Toggle
+- Each incense channel row now has a **🟢/⚫ enable/disable** button to the left of the ✕ remove button
+- Toggling sends `toggle_incense_channel` to the server; server adds/removes the channel ID from `disabledIncenseChannels` Set, persists to `config.json`, and broadcasts `incense_channel_toggled { channelId, enabled }`
+- Disabled channels are skipped in both `buyIncense()` and `startIncenseSpam()` — no messages sent, no purchases made
+- Init payload includes `disabledIncenseChannels` array; client seeds its `incenseDisabled` Set on connect so rows render correctly on first load
+- **Bug fix (B1)**: `applyIncenseChannelToggled` now falls back to directly patching the toggle button's visual state when the `incenseMap` entry hasn't been populated yet (e.g. toggled before the first incense broadcast arrives), instead of silently no-oping
+- **Bug fix (B2)**: Added `escJs()` helper that escapes backslash and single-quote before HTML-encoding; used for channelId values injected into single-quoted `onclick` JS string literals in `renderIncenseRow`, preventing string-injection in non-numeric channel IDs
+
+### Incense Pause/Resume Message Detection
+- New message handler in `messageCreate` placed **before** the `isSleeping` guard — fires even during captcha pause
+- Detects `'Incense has been paused.'` from Pokétwo (ID `716390085896962058`):
+  - Sets `incenseActive[chId] = false`, broadcasts updated incense status
+  - If `autoBuyIncense` is on and the channel isn't disabled: waits 2 s then sends `@Pokétwo incense resume`
+- Detects `'Incense has been resumed.'` from the same ID:
+  - Sets `incenseActive[chId] = true`, broadcasts updated incense status
+- Both branches `return` early so no downstream handlers process these Pokétwo system messages
+
+---
+
 ## [v1.6.4] — Catch Speed Modes, Liquid Glass Theme & Dynamic Incense Manager
 
 ### Catch Speed — 4-way selector
