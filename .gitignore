@@ -15,3 +15,6 @@ Thumbs.db
 # Environment files
 .env
 .env.*
+
+# Personal alarm sound — users provide their own (see README Custom Alarm Sound section)
+dashboard/alarm.mp3

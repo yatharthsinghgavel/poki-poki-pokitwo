@@ -70,7 +70,7 @@ Everything is controlled from a **live web dashboard** at `http://localhost:3000
 | Element | Description |
 |---|---|
 | ⚡ Direct Catch / 💡 Hint Catch | Toggle catch mode — Direct uses Poke-Name, Hint solves Pokétwo's hint |
-| 🔔 Captcha Alert toggle | Enable/disable audio alarm when a captcha is detected |
+| 🔔 Captcha Alert toggle | Enable/disable audio alarm when a captcha is detected. Click **🔊 Test** next to it to preview the sound. |
 | Status badge | 🟢 Active / ⏸ Paused / 🔴 Captcha / ⚫ Offline |
 
 ### Stat Cards (top row)
@@ -229,7 +229,40 @@ For maximum catching with incense:
 
 ---
 
-## Contributing
+## Custom Alarm Sound
+
+The captcha alert plays `dashboard/alarm.mp3` by default (falls back to `dashboard/alert.wav` if not found). You can swap it out with any sound you want.
+
+### Option A — Drop in a file manually
+1. Find any `.mp3`, `.wav`, or `.ogg` sound file you want (e.g. from [freesound.org](https://freesound.org))
+2. Rename it to `alarm.mp3`
+3. Drop it into the `dashboard/` folder, replacing the existing one
+4. Reload the dashboard — done
+
+### Option B — Using Kiro IDE
+1. Open the project in [Kiro](https://kiro.dev)
+2. In the file explorer, navigate to the `dashboard/` folder
+3. Right-click → **Upload file** (or drag your audio file directly into the folder)
+4. Rename it to `alarm.mp3`
+5. Reload the dashboard
+
+### Option C — Using VS Code
+1. Open the project folder in VS Code
+2. Drag your audio file from Explorer directly into the `dashboard/` folder in the VS Code sidebar
+3. Rename it to `alarm.mp3`
+4. Reload the dashboard
+
+### Testing the sound
+Hit the **🔊 Test** button in the top-right of the dashboard header. It plays the alarm for 3 seconds so you can hear it without triggering a real captcha.
+
+### Supported formats
+`.mp3` · `.wav` · `.ogg` — all work in modern browsers. MP3 has the best compatibility.
+
+> The alarm loops until you dismiss the captcha popup or click the ✅ button.
+
+---
+
+
 
 1. Fork the repo
 2. Create a branch: `git checkout -b feature/your-feature`

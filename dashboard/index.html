@@ -356,6 +356,7 @@
         <div class="slider"></div>
       </div>
     </label>
+    <button onclick="testAlarm()" style="background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.3);color:#ef4444;border-radius:8px;padding:5px 12px;font-size:.8rem;font-weight:600;cursor:pointer;font-family:'Outfit',sans-serif;" title="Test the captcha alarm sound">🔊 Test</button>
 
     <!-- BOT STATUS -->
     <div id="status-badge" class="offline">
@@ -528,6 +529,7 @@
 </div>
 
 <audio id="captcha-audio" loop>
+  <source src="alarm.mp3" type="audio/mpeg" />
   <source src="alert.wav" type="audio/wav" />
 </audio>
 
@@ -862,11 +864,10 @@ function resumeBot() {
 
 function playAlertAudio() {
   if (alertAudioPlaying) return;
+  unlockAudio();
   const audio = document.getElementById('captcha-audio');
-  if (!audio.src || audio.networkState === 3) {
-    playBeep();
-    return;
-  }
+  // Resume AudioContext if suspended (browser autoplay policy)
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
   audio.currentTime = 0;
   audio.play().then(() => { alertAudioPlaying = true; }).catch(() => playBeep());
 }
@@ -881,6 +882,24 @@ function stopAlertAudio() {
 
 let beepInterval = null;
 let audioCtx = null;
+
+// Unlock AudioContext on first user interaction — required by browser autoplay policy
+function unlockAudio() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  const audio = document.getElementById('captcha-audio');
+  audio.load();
+  document.removeEventListener('click', unlockAudio);
+  document.removeEventListener('keydown', unlockAudio);
+}
+document.addEventListener('click', unlockAudio);
+document.addEventListener('keydown', unlockAudio);
+
+function testAlarm() {
+  playAlertAudio();
+  setTimeout(() => stopAlertAudio(), 3000);
+}
+
 function playBeep() {
   if (beepInterval) return;
   audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
