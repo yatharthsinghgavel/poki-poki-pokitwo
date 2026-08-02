@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Poketwo Autocatcher Dashboard</title>
+<style>
+  :root {
+    --bg:       #0d0f14;
+    --surface:  #161b24;
+    --card:     #1e2535;
+    --border:   #2a3347;
+    --accent:   #5865f2;
+    --accent2:  #57f287;
+    --warn:     #fee75c;
+    --danger:   #ed4245;
+    --text:     #e3e8f0;
+    --muted:    #7b8598;
+    --radius:   12px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    min-height: 100vh;
+  }
+
+  /* ---- TOPBAR ---- */
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 28px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  .logo { display: flex; align-items: center; gap: 10px; }
+  .logo img { width: 36px; height: 36px; border-radius: 50%; }
+  .logo-text { font-size: 1.15rem; font-weight: 700; letter-spacing: .3px; }
+  .logo-text span { color: var(--accent); }
+
+  .header-right { display: flex; align-items: center; gap: 14px; }
+
+  #status-badge {
+    display: flex; align-items: center; gap: 7px;
+    padding: 5px 13px; border-radius: 20px;
+    font-size: .82rem; font-weight: 600;
+    background: #1a2e1e; color: var(--accent2);
+    border: 1px solid #2d5c35;
+    transition: all .3s;
+  }
+  #status-badge.captcha { background: #2e1a1a; color: var(--danger); border-color: #5c2d2d; }
+  #status-badge.paused  { background: #2a2416; color: var(--warn);   border-color: #5c4a1e; }
+  #status-badge.offline { background: #1e1e1e; color: var(--muted);  border-color: var(--border); }
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent2); animation: pulse 2s infinite;
+  }
+  #status-badge.captcha .dot { background: var(--danger); }
+  #status-badge.paused  .dot { background: var(--warn); animation: none; }
+  #status-badge.offline .dot { background: var(--muted); animation: none; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+  /* ---- AUDIO TOGGLE ---- */
+  .audio-toggle {
+    display: flex; align-items: center; gap: 8px;
+    font-size: .82rem; color: var(--muted); cursor: pointer;
+    user-select: none;
+  }
+  .toggle-switch {
+    position: relative; width: 40px; height: 22px;
+  }
+  .toggle-switch input { opacity: 0; width: 0; height: 0; }
+  .slider {
+    position: absolute; inset: 0;
+    background: var(--border); border-radius: 22px;
+    transition: .3s; cursor: pointer;
+  }
+  .slider::before {
+    content: ''; position: absolute;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: #fff; left: 3px; top: 3px; transition: .3s;
+  }
+  input:checked + .slider { background: var(--accent); }
+  input:checked + .slider::before { transform: translateX(18px); }
+
+  /* ---- LAYOUT ---- */
+  main {
+    max-width: 1300px;
+    margin: 0 auto;
+    padding: 28px 20px;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+    grid-template-rows: auto auto auto;
+    gap: 18px;
+  }
+
+  /* ---- STAT CARDS ---- */
+  .stat-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 24px;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .stat-label { font-size: .75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .8px; }
+  .stat-value { font-size: 2rem; font-weight: 800; line-height: 1; }
+  .stat-value.green { color: var(--accent2); }
+  .stat-value.red   { color: var(--danger); }
+  .stat-value.yellow{ color: var(--warn); }
+  .stat-value.blue  { color: var(--accent); }
+  .stat-sub { font-size: .75rem; color: var(--muted); margin-top: 2px; }
+
+  /* ---- PANELS ---- */
+  .panel {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  .panel-header {
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+    font-size: .82rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .8px;
+    color: var(--muted);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .panel-header .badge {
+    background: var(--accent); color: #fff;
+    font-size: .7rem; padding: 2px 8px; border-radius: 10px;
+  }
+  .panel-body { flex: 1; overflow-y: auto; padding: 10px 0; max-height: 340px; }
+  .panel-body::-webkit-scrollbar { width: 4px; }
+  .panel-body::-webkit-scrollbar-track { background: transparent; }
+  .panel-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+  /* ---- CATCH LIST ---- */
+  .catch-row {
+    display: flex; align-items: center;
+    padding: 8px 18px; gap: 10px;
+    border-bottom: 1px solid #1e2535;
+    font-size: .85rem;
+    animation: slideIn .25s ease;
+  }
+  @keyframes slideIn { from { opacity:0; transform:translateY(-6px); } to { opacity:1; transform:none; } }
+  .catch-name { font-weight: 700; min-width: 110px; }
+  .catch-rarity { color: var(--warn); font-size: .75rem; min-width: 70px; }
+  .catch-loc { color: var(--muted); font-size: .75rem; flex: 1; }
+  .catch-time { color: var(--muted); font-size: .72rem; white-space: nowrap; }
+
+  /* ---- LOG LIST ---- */
+  .log-row {
+    padding: 6px 18px;
+    font-size: .8rem;
+    line-height: 1.5;
+    display: flex; gap: 10px; align-items: flex-start;
+    animation: slideIn .2s ease;
+  }
+  .log-time { color: var(--muted); white-space: nowrap; min-width: 62px; }
+  .log-text { flex: 1; }
+  .log-row.info   .log-text { color: var(--text); }
+  .log-row.success .log-text { color: var(--accent2); }
+  .log-row.warn   .log-text { color: var(--warn); }
+  .log-row.error  .log-text { color: var(--danger); }
+
+  /* ---- CAPTCHA ALERT ---- */
+  #captcha-alert {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,.75);
+    z-index: 100;
+    align-items: center; justify-content: center;
+  }
+  #captcha-alert.show { display: flex; }
+  .alert-box {
+    background: var(--card);
+    border: 2px solid var(--danger);
+    border-radius: 16px;
+    padding: 36px 44px;
+    text-align: center;
+    max-width: 420px;
+    width: 90%;
+    animation: popIn .25s ease;
+  }
+  @keyframes popIn { from{transform:scale(.85);opacity:0} to{transform:scale(1);opacity:1} }
+  .alert-icon { font-size: 3rem; margin-bottom: 12px; }
+  .alert-box h2 { font-size: 1.4rem; color: var(--danger); margin-bottom: 8px; }
+  .alert-box p  { color: var(--muted); font-size: .9rem; margin-bottom: 22px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 10px 24px; border-radius: 8px;
+    border: none; cursor: pointer;
+    font-size: .9rem; font-weight: 600;
+    transition: opacity .2s;
+  }
+  .btn:hover { opacity: .85; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-danger  { background: var(--danger); color: #fff; }
+  .btn-ghost   { background: var(--border); color: var(--text); }
+
+  /* ---- GRID PLACEMENT ---- */
+  .stat-card:nth-child(1) { grid-column: 1; }
+  .stat-card:nth-child(2) { grid-column: 2; }
+  .stat-card:nth-child(3) { grid-column: 3; }
+  .stat-card:nth-child(4) { grid-column: 4; }
+
+  .catches-panel { grid-column: 1 / 3; grid-row: 2; }
+  .log-panel     { grid-column: 3 / 5; grid-row: 2; }
+  .controls-panel { grid-column: 1 / 5; grid-row: 3; }
+
+  /* ---- CONTROLS ---- */
+  .controls-inner {
+    padding: 18px;
+    display: flex; gap: 12px; flex-wrap: wrap; align-items: center;
+  }
+  #uptime { color: var(--muted); font-size: .82rem; margin-left: auto; }
+
+  /* ---- SPAWN TICKER ---- */
+  #spawn-ticker {
+    grid-column: 1 / 5;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 18px;
+    font-size: .85rem;
+    color: var(--muted);
+    min-height: 44px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  #spawn-ticker span { color: var(--accent2); font-weight: 700; }
+
+  /* ---- RESPONSIVE ---- */
+  @media (max-width: 900px) {
+    main { grid-template-columns: 1fr 1fr; }
+    .stat-card:nth-child(3) { grid-column: 1; }
+    .stat-card:nth-child(4) { grid-column: 2; }
+    .catches-panel { grid-column: 1 / 3; grid-row: 3; }
+    .log-panel     { grid-column: 1 / 3; grid-row: 4; }
+    .controls-panel { grid-column: 1 / 3; grid-row: 5; }
+    #spawn-ticker  { grid-column: 1 / 3; }
+  }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header>
+  <div class="logo">
+    <img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/4.png" alt="Pokeball" onerror="this.style.display='none'"/>
+    <div class="logo-text">Poketwo <span>Autocatcher</span> Dashboard</div>
+  </div>
+  <div class="header-right">
+    <label class="audio-toggle" title="Play an alarm sound when a captcha is detected">
+      <span>🔔 Captcha Alert</span>
+      <div class="toggle-switch">
+        <input type="checkbox" id="audio-toggle" checked />
+        <div class="slider"></div>
+      </div>
+    </label>
+    <div id="status-badge" class="offline">
+      <div class="dot"></div>
+      <span id="status-text">Connecting…</span>
+    </div>
+  </div>
+</header>
+
+<!-- MAIN GRID -->
+<main>
+
+  <!-- STAT CARDS -->
+  <div class="stat-card">
+    <div class="stat-label">Pokémon Caught</div>
+    <div class="stat-value green" id="stat-caught">0</div>
+    <div class="stat-sub">this session</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Missed / Wrong</div>
+    <div class="stat-value red" id="stat-missed">0</div>
+    <div class="stat-sub">wrong guesses</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Captchas</div>
+    <div class="stat-value yellow" id="stat-captchas">0</div>
+    <div class="stat-sub">detected</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Account</div>
+    <div class="stat-value blue" id="stat-user" style="font-size:1.1rem;margin-top:4px">—</div>
+    <div class="stat-sub" id="stat-uptime">uptime: —</div>
+  </div>
+
+  <!-- SPAWN TICKER -->
+  <div id="spawn-ticker">
+    <span>⚡</span> Waiting for next Pokémon spawn…
+  </div>
+
+  <!-- RECENT CATCHES -->
+  <div class="panel catches-panel">
+    <div class="panel-header">
+      Recent Catches
+      <div class="badge" id="catches-count">0</div>
+    </div>
+    <div class="panel-body" id="catches-list">
+      <div style="padding:20px 18px;color:var(--muted);font-size:.85rem;">No catches yet this session.</div>
+    </div>
+  </div>
+
+  <!-- EVENT LOG -->
+  <div class="panel log-panel">
+    <div class="panel-header">
+      Live Log
+      <button class="btn btn-ghost" style="padding:3px 10px;font-size:.72rem;" onclick="clearLog()">Clear</button>
+    </div>
+    <div class="panel-body" id="log-list">
+      <div class="log-row info"><span class="log-time">—</span><span class="log-text">Waiting for bot connection…</span></div>
+    </div>
+  </div>
+
+  <!-- CONTROLS -->
+  <div class="panel controls-panel">
+    <div class="panel-header">Controls</div>
+    <div class="controls-inner">
+      <button class="btn btn-primary" onclick="resolveCaptcha()">✅ Mark Captcha Solved</button>
+      <button class="btn btn-ghost" id="pause-btn" onclick="pauseBot()">⏸ Pause Bot</button>
+      <button class="btn btn-primary" id="resume-btn" onclick="resumeBot()" style="display:none;">▶️ Resume Bot</button>
+      <button class="btn btn-ghost" onclick="clearCatches()">🗑 Clear Catches</button>
+      <div id="uptime">Uptime: <span id="uptime-val">—</span></div>
+    </div>
+  </div>
+
+  <!-- TRANSFER ALL PANEL -->
+  <div class="panel" style="grid-column:1/5;grid-row:4;">
+    <div class="panel-header">
+      Transfer All Pokémon
+      <span id="transfer-status-badge" style="font-size:.75rem;color:var(--muted);">Idle</span>
+    </div>
+    <div style="padding:18px;display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end;">
+      <div style="display:flex;flex-direction:column;gap:6px;flex:1;min-width:200px;">
+        <label style="font-size:.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;">Target User ID</label>
+        <input id="transfer-userid" type="text" placeholder="e.g. 123456789012345678"
+          style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 13px;color:var(--text);font-size:.9rem;outline:none;width:100%;" />
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;flex:1;min-width:200px;">
+        <label style="font-size:.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;">Channel ID (where to run trade)</label>
+        <input id="transfer-channelid" type="text" placeholder="e.g. 1533391245714657393"
+          style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 13px;color:var(--text);font-size:.9rem;outline:none;width:100%;" />
+      </div>
+      <button class="btn btn-danger" id="transfer-btn" onclick="startTransferAll()" style="height:40px;white-space:nowrap;">
+        🔀 Transfer All Pokémon
+      </button>
+    </div>
+    <div id="transfer-log" style="padding:0 18px 14px;font-size:.8rem;color:var(--muted);min-height:24px;"></div>
+  </div>
+
+</main>
+
+<!-- CAPTCHA ALERT MODAL -->
+<div id="captcha-alert">
+  <div class="alert-box">
+    <div class="alert-icon">🚨</div>
+    <h2>Captcha Detected!</h2>
+    <p>The autocatcher has been paused. Solve the captcha in Discord, then click the button below to resume.</p>
+    <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
+      <button class="btn btn-primary" onclick="resolveCaptcha()">✅ I Solved It — Resume Bot</button>
+      <button class="btn btn-ghost" onclick="dismissAlert()">Dismiss</button>
+    </div>
+  </div>
+</div>
+
+<!-- AUDIO: alert.wav generated by the server, Web Audio API beep as fallback -->
+<audio id="captcha-audio" loop>
+  <source src="alert.wav" type="audio/wav" />
+</audio>
+
+<script>
+// ---- WebSocket ----
+let ws;
+let reconnectTimer;
+let startTime = null;
+let uptimeTimer;
+let audioEnabled = true;
+let alertAudioPlaying = false;
+
+const audioToggle = document.getElementById('audio-toggle');
+audioToggle.addEventListener('change', () => {
+  audioEnabled = audioToggle.checked;
+  if (!audioEnabled) stopAlertAudio();
+});
+
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}`);
+
+  ws.onopen = () => {
+    setStatus('online');
+    addLog('Connected to bot.', 'success');
+  };
+
+  ws.onclose = () => {
+    setStatus('offline');
+    addLog('Disconnected. Reconnecting in 3s…', 'warn');
+    reconnectTimer = setTimeout(connect, 3000);
+  };
+
+  ws.onerror = () => {
+    ws.close();
+  };
+
+  ws.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      handleEvent(msg);
+    } catch(_) {}
+  };
+}
+
+function handleEvent(msg) {
+  switch (msg.type) {
+    case 'init':
+      applyInit(msg.data);
+      break;
+    case 'stats':
+      updateStats(msg.data);
+      break;
+    case 'catch':
+      addCatchRow(msg.data);
+      break;
+    case 'log':
+      addLog(msg.data.text, msg.data.level, msg.data.time);
+      break;
+    case 'status':
+      if (msg.data.sleeping) {
+        setStatus('captcha');
+      } else {
+        setStatus('online');
+      }
+      if (msg.data.username) {
+        document.getElementById('stat-user').textContent = msg.data.username;
+      }
+      break;
+    case 'captcha':
+      triggerCaptchaAlert(msg.data);
+      break;
+    case 'captcha_resolved':
+      dismissAlert();
+      stopAlertAudio();
+      setStatus('online');
+      addLog('✅ Captcha resolved — bot resumed.', 'success');
+      break;
+    case 'transfer':
+      handleTransferUpdate(msg.data);
+      break;
+  }
+}
+
+function applyInit(data) {
+  document.getElementById('stat-caught').textContent   = data.caught   || 0;
+  document.getElementById('stat-missed').textContent   = data.missed   || 0;
+  document.getElementById('stat-captchas').textContent = data.captchas || 0;
+  document.getElementById('catches-count').textContent = data.caught   || 0;
+  if (data.username) document.getElementById('stat-user').textContent = data.username;
+
+  // Repopulate catches
+  const list = document.getElementById('catches-list');
+  if (data.recentCatches && data.recentCatches.length > 0) {
+    list.innerHTML = '';
+    data.recentCatches.forEach(c => appendCatchRow(c));
+  }
+
+  if (data.startTime) {
+    startTime = data.startTime;
+    startUptimeTimer();
+  }
+
+  if (data.botStatus === 'captcha') setStatus('captcha');
+  else if (data.botStatus === 'online') setStatus('online');
+}
+
+function updateStats(data) {
+  if (data.caught   !== undefined) { document.getElementById('stat-caught').textContent   = data.caught;   document.getElementById('catches-count').textContent = data.caught; }
+  if (data.missed   !== undefined)   document.getElementById('stat-missed').textContent   = data.missed;
+  if (data.captchas !== undefined)   document.getElementById('stat-captchas').textContent = data.captchas;
+}
+
+// ---- Status ----
+function setStatus(state) {
+  const badge = document.getElementById('status-badge');
+  const text  = document.getElementById('status-text');
+  badge.className = state;
+  const labels = { online: '🟢 Online', captcha: '🔴 Captcha!', paused: '⏸ Paused', offline: '⚫ Offline' };
+  text.textContent = labels[state] || state;
+
+  // Swap pause/resume button visibility
+  const pauseBtn  = document.getElementById('pause-btn');
+  const resumeBtn = document.getElementById('resume-btn');
+  if (state === 'online') {
+    pauseBtn.style.display  = '';
+    resumeBtn.style.display = 'none';
+  } else if (state === 'paused' || state === 'captcha') {
+    pauseBtn.style.display  = 'none';
+    resumeBtn.style.display = '';
+  }
+}
+
+// ---- Catches ----
+function addCatchRow(data) {
+  const list = document.getElementById('catches-list');
+  const placeholder = list.querySelector('div[style]');
+  if (placeholder) list.innerHTML = '';
+  appendCatchRow(data, true);
+}
+
+function appendCatchRow(data, prepend = false) {
+  const list = document.getElementById('catches-list');
+  const row = document.createElement('div');
+  row.className = 'catch-row';
+  row.innerHTML = `
+    <span class="catch-name">${escHtml(data.name)}</span>
+    <span class="catch-rarity">${escHtml(data.rarity || '?')}</span>
+    <span class="catch-loc">${escHtml(data.guild || '')} / #${escHtml(data.channel || '')}</span>
+    <span class="catch-time">${escHtml(data.time || '')}</span>
+  `;
+  if (prepend) list.prepend(row);
+  else list.appendChild(row);
+}
+
+function clearCatches() {
+  document.getElementById('catches-list').innerHTML =
+    '<div style="padding:20px 18px;color:var(--muted);font-size:.85rem;">Cleared.</div>';
+}
+
+// ---- Log ----
+function addLog(text, level = 'info', time) {
+  const list = document.getElementById('log-list');
+  const placeholder = list.querySelector('div.log-row:only-child');
+
+  const row = document.createElement('div');
+  row.className = `log-row ${level}`;
+  const t = time || new Date().toLocaleTimeString();
+  row.innerHTML = `<span class="log-time">${t}</span><span class="log-text">${escHtml(text)}</span>`;
+  list.prepend(row);
+
+  // Keep max 100 entries
+  while (list.children.length > 100) list.removeChild(list.lastChild);
+}
+
+function clearLog() {
+  document.getElementById('log-list').innerHTML = '';
+  addLog('Log cleared.', 'info');
+}
+
+// ---- Spawn ticker ----
+function updateSpawnTicker(data) {
+  const ticker = document.getElementById('spawn-ticker');
+  ticker.innerHTML = `<span>⚡</span> Pokémon spawned: <span>${escHtml(data.name)}</span> — catching in <span>${data.delay}s</span>`;
+}
+
+// ---- Transfer All ----
+function startTransferAll() {
+  const targetId   = document.getElementById('transfer-userid').value.trim();
+  const channelId  = document.getElementById('transfer-channelid').value.trim();
+  if (!targetId || !channelId) {
+    setTransferLog('⚠️ Please enter both a User ID and a Channel ID.', 'warn');
+    return;
+  }
+  if (!confirm(`Transfer ALL your Pokémon to user ID ${targetId}?\n\nThey must accept the trade in Discord. This cannot be undone!`)) return;
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'transfer_all', data: { targetId, channelId } }));
+    document.getElementById('transfer-btn').disabled = true;
+    setTransferLog('⏳ Transfer started — waiting for target to accept trade in Discord...', 'info');
+    setTransferBadge('Running…', '#fee75c');
+    addLog(`🔀 Transfer to ${targetId} initiated.`, 'info');
+  }
+}
+
+function handleTransferUpdate(data) {
+  const msgs = {
+    started:    `⏳ Trade request sent to ${data.targetId} — waiting for them to accept...`,
+    adding:     `📦 Adding Pokémon — batch ${data.batch}...`,
+    done:       `✅ Transfer complete! Sent ${data.batches} batches to ${data.targetId}.`,
+    maybe_done: `⚠️ Transfer may be complete — verify in Discord.`,
+    failed:     `❌ Transfer failed: ${data.reason}`,
+  };
+  const levels = { started:'info', adding:'info', done:'success', maybe_done:'warn', failed:'error' };
+  const text = msgs[data.status] || data.status;
+  setTransferLog(text, levels[data.status] || 'info');
+  addLog(text, levels[data.status] || 'info');
+
+  if (data.status === 'done' || data.status === 'maybe_done' || data.status === 'failed') {
+    document.getElementById('transfer-btn').disabled = false;
+    setTransferBadge(data.status === 'done' ? 'Done ✅' : data.status === 'failed' ? 'Failed ❌' : 'Check Discord ⚠️',
+      data.status === 'done' ? '#57f287' : data.status === 'failed' ? '#ed4245' : '#fee75c');
+  }
+}
+
+function setTransferLog(text, level) {
+  const el = document.getElementById('transfer-log');
+  const colors = { info: 'var(--muted)', success: 'var(--accent2)', warn: 'var(--warn)', error: 'var(--danger)' };
+  el.style.color = colors[level] || 'var(--muted)';
+  el.textContent = text;
+}
+
+function setTransferBadge(text, color) {
+  const el = document.getElementById('transfer-status-badge');
+  el.textContent = text;
+  el.style.color = color;
+}
+
+// ---- Captcha alert ----
+function triggerCaptchaAlert(data) {
+  document.getElementById('captcha-alert').classList.add('show');
+  addLog(`🚨 CAPTCHA at ${data.time || ''}`, 'warn');
+  if (audioEnabled) playAlertAudio();
+}
+
+function dismissAlert() {
+  document.getElementById('captcha-alert').classList.remove('show');
+  stopAlertAudio();
+}
+
+function resolveCaptcha() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'captcha_done' }));
+  }
+  dismissAlert();
+  addLog('Captcha marked as solved from dashboard.', 'success');
+}
+
+function pauseBot() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'pause_bot' }));
+  }
+  setStatus('paused');
+  addLog('⏸ Bot paused.', 'warn');
+}
+
+function resumeBot() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'resume_bot' }));
+  }
+  setStatus('online');
+  addLog('▶️ Bot resumed.', 'success');
+}
+
+// ---- Audio ----
+function playAlertAudio() {
+  if (alertAudioPlaying) return;
+  const audio = document.getElementById('captcha-audio');
+
+  // If no audio file found, generate a beep using Web Audio API as fallback
+  if (!audio.src || audio.networkState === 3) {
+    playBeep();
+    return;
+  }
+  audio.currentTime = 0;
+  audio.play().then(() => { alertAudioPlaying = true; }).catch(() => playBeep());
+}
+
+function stopAlertAudio() {
+  alertAudioPlaying = false;
+  const audio = document.getElementById('captcha-audio');
+  audio.pause();
+  audio.currentTime = 0;
+  if (beepInterval) { clearInterval(beepInterval); beepInterval = null; }
+}
+
+// Web Audio API beep fallback (no file needed)
+let beepInterval = null;
+let audioCtx = null;
+function playBeep() {
+  if (beepInterval) return;
+  audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+  alertAudioPlaying = true;
+
+  function beep() {
+    if (!alertAudioPlaying) return;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.type = 'sine';
+    osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.4, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.4);
+    osc.start(audioCtx.currentTime);
+    osc.stop(audioCtx.currentTime + 0.4);
+  }
+
+  beep();
+  beepInterval = setInterval(() => {
+    if (!alertAudioPlaying) { clearInterval(beepInterval); beepInterval = null; return; }
+    beep();
+  }, 1200);
+}
+
+// ---- Uptime ----
+function startUptimeTimer() {
+  if (uptimeTimer) clearInterval(uptimeTimer);
+  uptimeTimer = setInterval(() => {
+    if (!startTime) return;
+    const diff = Math.floor((Date.now() - startTime) / 1000);
+    const h = Math.floor(diff / 3600);
+    const m = Math.floor((diff % 3600) / 60);
+    const s = diff % 60;
+    const str = `${pad(h)}:${pad(m)}:${pad(s)}`;
+    document.getElementById('uptime-val').textContent = str;
+    document.getElementById('stat-uptime').textContent = `uptime: ${str}`;
+  }, 1000);
+}
+function pad(n) { return String(n).padStart(2, '0'); }
+
+// ---- Util ----
+function escHtml(str) {
+  return String(str)
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;');
+}
+
+// ---- Init ----
+connect();
+</script>
+</body>
+</html>
