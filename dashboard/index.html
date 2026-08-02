@@ -524,8 +524,11 @@ input:checked+.sw-track::before{transform:translateX(17px);}
       <button class="btn btn-green" onclick="resolveCaptcha()">✅ Mark Captcha Solved</button>
       <button class="btn btn-ghost" id="btn-pause"  onclick="pauseBot()">⏸ Pause</button>
       <button class="btn btn-primary" id="btn-resume" onclick="resumeBot()" style="display:none;">▶️ Resume</button>
-      <button class="btn btn-amber" id="btn-boost" onclick="toggleBoost()">🚀 Boost: OFF</button>
-      <button class="btn btn-ghost" id="btn-instant" onclick="toggleInstantCatch()" title="Bypass queue and anti-detection delay — catch fires the instant a spawn is detected. High ban risk.">⚡ Instant: OFF</button>
+      <div class="mode-pill" title="Catch speed: Normal = stealth 1–7s · Quick = fast 300–800ms · Instant = no delay (ban risk)" style="align-self:center;">
+        <button class="mode-btn active" id="spd-normal"  onclick="setCatchSpeed('normal')">🛡️ Normal</button>
+        <button class="mode-btn"        id="spd-quick"   onclick="setCatchSpeed('quick')">🚀 Quick</button>
+        <button class="mode-btn"        id="spd-instant" onclick="setCatchSpeed('instant')">⚡ Instant</button>
+      </div>
       <button class="btn btn-ghost" onclick="clearCatches()">🗑 Clear Catches</button>
       <div id="uptime-lbl">
         <span id="el-user2" style="color:var(--text);font-weight:700;">—</span>
@@ -620,7 +623,6 @@ const elXferLog  = E('xfer-log'),    elXferBadge = E('el-xfer-badge');
 const elEffPct   = E('eff-pct'),     elEffArc    = E('eff-arc');
 const elEffC     = E('eff-c'),       elEffM      = E('eff-m');
 const btnPause   = E('btn-pause'),   btnResume   = E('btn-resume');
-const btnBoost   = E('btn-boost'),   btnInstant  = E('btn-instant');
 const audioChk   = E('audio-chk');
 const capModal   = E('cap-modal');
 
@@ -667,6 +669,7 @@ function dispatch(msg) {
     case 'captcha_resolved': dismissCap(); stopAlarm(); setStatus('online'); addLog('✅ Captcha resolved — bot resumed.','success'); break;
     case 'boost':            applyBoost(msg.data);             break;
     case 'instant_catch':    applyInstantCatch(msg.data);      break;
+    case 'catch_speed':      applyCatchSpeed(msg.data.speed);  break;
     case 'quest':            applyQuest(msg.data);             break;
     case 'milestone':        onMilestone(msg.data);            break;
     case 'incense':          applyIncense(msg.data);           break;
@@ -687,9 +690,8 @@ function applyInit(d) {
   elCatchCt.textContent = d.caught   ?? 0;
   if (d.pc !== undefined) elPc.textContent = (+d.pc).toLocaleString();
   if (d.username)  { elUser.textContent = d.username; elUser2.textContent = d.username; }
-  if (d.catchMode) applyCatchMode(d.catchMode);
-  if (d.boostMode !== undefined) applyBoost({ active: d.boostMode });
-  if (d.instantCatch !== undefined) applyInstantCatch({ active: d.instantCatch });
+  if (d.catchMode)   applyCatchMode(d.catchMode);
+  if (d.catchSpeed)  applyCatchSpeed(d.catchSpeed);
   refreshRate(d.caught ?? 0, d.missed ?? 0);
 
   if (d.recentCatches?.length) {
@@ -840,42 +842,47 @@ function applyIncense(d) {
   elIncense.innerHTML = chips.join('') || '<span class="inc-chip off">No channels</span>';
 }
 
-// ── BOOST ────────────────────────────────────────────────────────────────────
-function applyBoost(d) {
-  if (d.active) {
-    btnBoost.textContent       = '🚀 Boost: ON';
-    btnBoost.style.background  = 'var(--amber)';
-    btnBoost.style.color       = '#000';
-    elAdval.textContent        = '300ms – 800ms';
-    elDelay.textContent        = '300ms – 800ms';
-  } else {
-    btnBoost.textContent       = '🚀 Boost: OFF';
-    btnBoost.style.background  = '';
-    btnBoost.style.color       = '';
-    elAdval.textContent        = '1s – 7s';
-    elDelay.textContent        = '1s – 7s';
+// ── CATCH SPEED ───────────────────────────────────────────────────────────────
+function setCatchSpeed(speed) {
+  applyCatchSpeed(speed);
+  send({ type: 'set_catch_speed', data: { speed } });
+}
+
+function applyCatchSpeed(speed) {
+  // update pill buttons
+  ['normal','quick','instant'].forEach(s => {
+    const btn = E(`spd-${s}`);
+    if (btn) btn.classList.toggle('active', s === speed);
+  });
+
+  // style active button with appropriate colour
+  const spdQuick   = E('spd-quick');
+  const spdInstant = E('spd-instant');
+  const spdNormal  = E('spd-normal');
+  if (spdQuick)   { spdQuick.style.background   = speed === 'quick'   ? 'var(--amber)'  : ''; spdQuick.style.color   = speed === 'quick'   ? '#000' : ''; }
+  if (spdInstant) { spdInstant.style.background = speed === 'instant' ? 'var(--red)'    : ''; spdInstant.style.color = speed === 'instant' ? '#fff' : ''; }
+  if (spdNormal)  { spdNormal.style.background  = speed === 'normal'  ? 'var(--green)'  : ''; spdNormal.style.color  = speed === 'normal'  ? '#fff' : ''; }
+
+  // update anti-detect card
+  const delayLabels = { normal: '1s – 7s', quick: '300ms – 800ms', instant: '0ms (bypass)' };
+  const subLabels   = { normal: 'Gaussian delay · stealth', quick: 'Fast catch · competitor-aware', instant: '⚠️ No delay — ban risk!' };
+  if (elAdval) elAdval.textContent = delayLabels[speed] || '1s – 7s';
+  if (elAdsub) elAdsub.textContent = subLabels[speed]   || '';
+  if (elDelay) elDelay.textContent = delayLabels[speed] || '1s – 7s';
+
+  // warning pill for instant
+  if (speed === 'instant') {
+    showWarning('catch_speed', '⚡ Instant mode ON — no anti-detection delay! High ban risk.', 'error');
+  } else if (speed === 'quick') {
+    showWarning('catch_speed', '🚀 Quick mode ON — 300–800ms delay, no stealth guarantee.', 'warn');
   }
 }
 
+// legacy — kept so old server events don't break if they arrive
+function applyBoost(d) { applyCatchSpeed(d.active ? 'quick' : 'normal'); }
+function applyInstantCatch(d) { applyCatchSpeed(d.active ? 'instant' : 'normal'); }
 function toggleBoost() { send({ type: 'toggle_boost' }); }
-
-// ── INSTANT CATCH ────────────────────────────────────────────────────────────
 function toggleInstantCatch() { send({ type: 'toggle_instant_catch' }); }
-
-function applyInstantCatch(d) {
-  if (d.active) {
-    btnInstant.textContent      = '⚡ Instant: ON';
-    btnInstant.style.background = 'var(--red)';
-    btnInstant.style.color      = '#fff';
-    btnInstant.title            = 'Instant Catch is ON — queue & delay bypassed. High ban risk. Click to disable.';
-    showWarning('instant_catch', '⚡ Instant Catch is ON — no anti-detection delay! Use with caution.', 'error');
-  } else {
-    btnInstant.textContent      = '⚡ Instant: OFF';
-    btnInstant.style.background = '';
-    btnInstant.style.color      = '';
-    btnInstant.title            = 'Bypass queue and anti-detection delay — catch fires the instant a spawn is detected. High ban risk.';
-  }
-}
 
 // ── MILESTONE ────────────────────────────────────────────────────────────────
 function onMilestone(d) {

@@ -28,7 +28,12 @@ const json   = require('./namefix.json');
 
 let isSleeping = false;
 let catchMode  = 'direct'; // 'direct' | 'hint'
-let instantCatch = false;  // bypass queue & delay — fire immediately
+
+// ─── CATCH SPEED MODE ────────────────────────────────────────────────────────
+// 'normal'  — gaussian 1–7 s anti-detection delay (safest)
+// 'quick'   — 300–800 ms, still queued, competitor-aware (old boost mode)
+// 'instant' — fires immediately, no queue, no delay (highest ban risk)
+let catchSpeed = 'normal';
 
 // ─── ANTI-DETECTION ──────────────────────────────────────────────────────────
 // Each session gets a unique jitter so timing fingerprint changes on every restart.
@@ -60,8 +65,8 @@ async function processCatchQueue() {
 }
 
 function enqueueCatch(name, fn) {
-    // ── INSTANT CATCH MODE: skip queue and delay entirely ──
-    if (instantCatch) {
+    // ── INSTANT: skip queue and delay entirely ──
+    if (catchSpeed === 'instant') {
         stats.spawns++;
         broadcast('stats', { caught: stats.caught, missed: stats.missed,
                              captchas: stats.captchas, spawns: stats.spawns,
@@ -265,7 +270,7 @@ let transferActive = false;
 
 wss.on('connection', ws => {
     const rates = calculateRates();
-    ws.send(JSON.stringify({ type: 'init', data: { ...stats, catchMode, instantCatch, competitors: Object.values(competitors), ...rates, history } }));
+    ws.send(JSON.stringify({ type: 'init', data: { ...stats, catchMode, catchSpeed, competitors: Object.values(competitors), ...rates, history } }));
     ws.on('message', raw => {
         try {
             const msg = JSON.parse(raw);
@@ -293,16 +298,29 @@ wss.on('connection', ws => {
                 }
             }
             if (msg.type === 'toggle_boost') {
-                boostMode = !boostMode;
-                broadcast('boost', { active: boostMode });
-                broadcast('log', { text: boostMode ? '🚀 Boost mode ON — fast catch enabled' : '🛡️ Boost mode OFF — stealth timing restored', level: boostMode ? 'warn' : 'success' });
-                logEvent(`Boost mode: ${boostMode ? 'ON' : 'OFF'}`, 'warn');
+                // Legacy support — toggle between normal and quick
+                catchSpeed = catchSpeed === 'quick' ? 'normal' : 'quick';
+                boostMode  = catchSpeed === 'quick';
+                broadcast('catch_speed', { speed: catchSpeed });
+                broadcast('log', { text: catchSpeed === 'quick' ? '🚀 Quick mode ON — 300–800ms catch delay' : '🛡️ Normal mode restored — stealth timing active', level: catchSpeed === 'quick' ? 'warn' : 'success' });
+                logEvent(`Catch speed: ${catchSpeed}`, 'warn');
+            }
+            if (msg.type === 'set_catch_speed') {
+                const speed = msg.data?.speed;
+                if (['normal', 'quick', 'instant'].includes(speed)) {
+                    catchSpeed = speed;
+                    boostMode  = speed === 'quick';
+                    broadcast('catch_speed', { speed });
+                    const labels = { normal: '🛡️ Normal mode — stealth timing (1–7s)', quick: '🚀 Quick mode — 300–800ms delay', instant: '⚡ Instant mode — no delay, no queue!' };
+                    broadcast('log', { text: labels[speed], level: speed === 'instant' ? 'error' : speed === 'quick' ? 'warn' : 'success' });
+                    logEvent(`Catch speed: ${speed}`, 'warn');
+                }
             }
             if (msg.type === 'toggle_instant_catch') {
-                instantCatch = !instantCatch;
-                broadcast('instant_catch', { active: instantCatch });
-                broadcast('log', { text: instantCatch ? '⚡ Instant Catch ON — queue & delay bypassed' : '🛡️ Instant Catch OFF — normal queue & delay restored', level: instantCatch ? 'warn' : 'success' });
-                logEvent(`Instant catch: ${instantCatch ? 'ON' : 'OFF'}`, 'warn');
+                // Legacy support
+                catchSpeed = catchSpeed === 'instant' ? 'normal' : 'instant';
+                broadcast('catch_speed', { speed: catchSpeed });
+                broadcast('log', { text: catchSpeed === 'instant' ? '⚡ Instant Catch ON — no delay!' : '🛡️ Normal mode restored', level: catchSpeed === 'instant' ? 'error' : 'success' });
             }
             if (msg.type === 'transfer_all') {
                 const { targetId, channelId } = msg.data;
@@ -475,35 +493,30 @@ async function startTransfer(channel, targetId) {
     transferActive = false;
 }
 
-// ─── BOOST MODE ──────────────────────────────────────────────────────────────
-// Boost mode overrides humanDelay() with a very short window (300-800ms).
-// It also feeds into competitor tracker — if a competitor is detected and faster
-// than boost floor, boost automatically undercuts them.
-// Toggle from dashboard or via $boost command.
-let boostMode = false;
+// ─── CATCH SPEED — DELAY LOGIC ───────────────────────────────────────────────
+// Feeds into competitor tracker — in quick mode, auto-undercuts the fastest
+// competitor by 200 ms. In normal mode, still undercuts but with 300 ms margin.
+// Toggle from dashboard (3-way pill) or via $speed command.
+let boostMode = false; // kept for backwards compat with $boost Discord command
 
 function getDelay() {
-    if (boostMode) {
-        // Boost: 300-800ms with session jitter baked in
+    const allTimes = Object.values(competitors).map(c => c.fastest).filter(f => f < 9999);
+    const fastest  = allTimes.length > 0 ? Math.min(...allTimes) : null;
+
+    if (catchSpeed === 'quick') {
+        // Quick: 300–800 ms with competitor undercut
         const base = Math.floor(Math.random() * 500) + 300;
-        // If competitors known, undercut the fastest by 200ms
-        const allTimes = Object.values(competitors).map(c => c.fastest).filter(f => f < 9999);
-        if (allTimes.length > 0) {
-            const fastest = Math.min(...allTimes);
+        if (fastest !== null)
             return Math.max(200, fastest - 200 + Math.floor(Math.random() * 100));
-        }
         return base;
     }
-    // Normal mode: gaussian 1-7s + session jitter
+
+    // Normal: gaussian 1–7 s + session jitter + competitor undercut
     const r1 = Math.random(), r2 = Math.random();
     const g  = Math.sqrt(-2 * Math.log(r1)) * Math.cos(2 * Math.PI * r2);
     let ms   = Math.round(3000 + g * 1200 + SESSION_JITTER);
-    // Still undercut known competitors even in normal mode
-    const allTimes = Object.values(competitors).map(c => c.fastest).filter(f => f < 9999);
-    if (allTimes.length > 0) {
-        const fastest = Math.min(...allTimes);
+    if (fastest !== null)
         ms = Math.min(ms, fastest - 300 + Math.floor(Math.random() * 150));
-    }
     return Math.max(800, Math.min(7000, ms));
 }
 
@@ -677,15 +690,29 @@ client.on('messageCreate', async message => {
         logEvent('Captcha resolved via Discord.', 'success');
     }
     if (message.content === '$boost' && message.author.id === config.OwnerID) {
-        boostMode = !boostMode;
-        message.channel.send(`🚀 Boost mode: **${boostMode ? 'ON' : 'OFF'}**`);
-        broadcast('boost', { active: boostMode });
-        logEvent(`Boost mode toggled: ${boostMode ? 'ON' : 'OFF'}`, 'warn');
+        catchSpeed = catchSpeed === 'quick' ? 'normal' : 'quick';
+        boostMode  = catchSpeed === 'quick';
+        message.channel.send(`🚀 Catch speed: **${catchSpeed.toUpperCase()}**`);
+        broadcast('catch_speed', { speed: catchSpeed });
+        logEvent(`Catch speed via $boost: ${catchSpeed}`, 'warn');
+    }
+    if (message.content.startsWith('$speed') && message.author.id === config.OwnerID) {
+        const arg = message.content.split(' ')[1]?.toLowerCase();
+        if (['normal','quick','instant'].includes(arg)) {
+            catchSpeed = arg;
+            boostMode  = arg === 'quick';
+            message.channel.send(`⚡ Catch speed set to **${catchSpeed.toUpperCase()}**`);
+            broadcast('catch_speed', { speed: catchSpeed });
+            logEvent(`Catch speed via $speed: ${catchSpeed}`, 'warn');
+        } else {
+            message.channel.send('Usage: `$speed normal|quick|instant`');
+        }
     }
     if (message.content === '$help' && message.author.id === config.OwnerID) {
-        message.channel.send('```\nPoketwo-Autocatcher v1.6.2\n' +
+        message.channel.send('```\nPoketwo-Autocatcher v1.6.3\n' +
             '$captcha_completed — resume after captcha\n' +
-            '$boost             — toggle boost mode (fast catch)\n' +
+            '$boost             — toggle between normal and quick speed\n' +
+            '$speed <mode>      — set catch speed: normal | quick | instant\n' +
             '$say <text>        — send a message\n' +
             '$react <msgID>     — react ✅\n' +
             '$click <msgID>     — click ✅ button\n' +
