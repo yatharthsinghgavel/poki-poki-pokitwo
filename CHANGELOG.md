@@ -4,6 +4,27 @@ All notable changes to Poketwo Autocatcher are documented here.
 
 ---
 
+## [v1.6.4] — Catch Speed Tray (Slow / Normal / Quick / Instant)
+
+### New Feature — 4-way Catch Speed selector
+- Replaced the old flat "Boost: ON/OFF" button and "Instant: ON/OFF" toggle with a **popover tray** in Bot Controls
+- Click the speed button → 4 options pop up above it, click one → tray closes and mode activates
+- Trigger button border and label update live to reflect the active mode
+
+| Mode | Delay | Queue | Notes |
+|---|---|---|---|
+| 🐢 Slow | 8–20 s gaussian | ✅ | Maximum stealth — ideal for long sessions |
+| 🛡️ Normal | 1–7 s gaussian | ✅ | Default — safest for public servers |
+| 🚀 Quick | 300–800 ms | ✅ | Competitor-aware undercut (old Boost mode) |
+| ⚡ Instant | 0 ms | ❌ bypassed | No delay — high ban risk, private only |
+
+- Anti-Detection card on the dashboard updates its delay range and sub-label live
+- Warning pill fires in Warnings & Health panel when Quick or Instant is active
+- `$speed slow|normal|quick|instant` Discord command updated to include `slow`
+- `$boost` Discord command still works — toggles Normal ↔ Quick
+
+---
+
 ## [v1.6.3] — Bento UI Redesign & Performance Overhaul
 
 ### Dashboard — Complete Rewrite (`dashboard/index.html`)

@@ -30,7 +30,8 @@ let isSleeping = false;
 let catchMode  = 'direct'; // 'direct' | 'hint'
 
 // ─── CATCH SPEED MODE ────────────────────────────────────────────────────────
-// 'normal'  — gaussian 1–7 s anti-detection delay (safest)
+// 'slow'    — gaussian 8–20 s (maximum stealth)
+// 'normal'  — gaussian 1–7 s anti-detection delay (safest for public servers)
 // 'quick'   — 300–800 ms, still queued, competitor-aware (old boost mode)
 // 'instant' — fires immediately, no queue, no delay (highest ban risk)
 let catchSpeed = 'normal';
@@ -307,11 +308,11 @@ wss.on('connection', ws => {
             }
             if (msg.type === 'set_catch_speed') {
                 const speed = msg.data?.speed;
-                if (['normal', 'quick', 'instant'].includes(speed)) {
+                if (['normal', 'quick', 'instant', 'slow'].includes(speed)) {
                     catchSpeed = speed;
                     boostMode  = speed === 'quick';
                     broadcast('catch_speed', { speed });
-                    const labels = { normal: '🛡️ Normal mode — stealth timing (1–7s)', quick: '🚀 Quick mode — 300–800ms delay', instant: '⚡ Instant mode — no delay, no queue!' };
+                    const labels = { slow: '🐢 Slow mode — 8–20s maximum stealth', normal: '🛡️ Normal mode — stealth timing (1–7s)', quick: '🚀 Quick mode — 300–800ms delay', instant: '⚡ Instant mode — no delay, no queue!' };
                     broadcast('log', { text: labels[speed], level: speed === 'instant' ? 'error' : speed === 'quick' ? 'warn' : 'success' });
                     logEvent(`Catch speed: ${speed}`, 'warn');
                 }
@@ -494,14 +495,24 @@ async function startTransfer(channel, targetId) {
 }
 
 // ─── CATCH SPEED — DELAY LOGIC ───────────────────────────────────────────────
-// Feeds into competitor tracker — in quick mode, auto-undercuts the fastest
-// competitor by 200 ms. In normal mode, still undercuts but with 300 ms margin.
-// Toggle from dashboard (3-way pill) or via $speed command.
+// 'slow'    — gaussian 8–20 s (maximum stealth, private servers)
+// 'normal'  — gaussian 1–7 s + session jitter (default, safest for public)
+// 'quick'   — 300–800 ms, queued, competitor-aware (old boost mode)
+// 'instant' — no delay, no queue (max ban risk)
+// Toggle from dashboard tray or via $speed command.
 let boostMode = false; // kept for backwards compat with $boost Discord command
 
 function getDelay() {
     const allTimes = Object.values(competitors).map(c => c.fastest).filter(f => f < 9999);
     const fastest  = allTimes.length > 0 ? Math.min(...allTimes) : null;
+
+    if (catchSpeed === 'slow') {
+        // Slow: gaussian centred at 14 s, range ~8–20 s — maximum stealth
+        const r1 = Math.random(), r2 = Math.random();
+        const g  = Math.sqrt(-2 * Math.log(r1)) * Math.cos(2 * Math.PI * r2);
+        const ms = Math.round(14000 + g * 3000 + SESSION_JITTER);
+        return Math.max(8000, Math.min(20000, ms));
+    }
 
     if (catchSpeed === 'quick') {
         // Quick: 300–800 ms with competitor undercut
@@ -698,14 +709,14 @@ client.on('messageCreate', async message => {
     }
     if (message.content.startsWith('$speed') && message.author.id === config.OwnerID) {
         const arg = message.content.split(' ')[1]?.toLowerCase();
-        if (['normal','quick','instant'].includes(arg)) {
+        if (['normal','quick','instant','slow'].includes(arg)) {
             catchSpeed = arg;
             boostMode  = arg === 'quick';
             message.channel.send(`⚡ Catch speed set to **${catchSpeed.toUpperCase()}**`);
             broadcast('catch_speed', { speed: catchSpeed });
             logEvent(`Catch speed via $speed: ${catchSpeed}`, 'warn');
         } else {
-            message.channel.send('Usage: `$speed normal|quick|instant`');
+            message.channel.send('Usage: `$speed slow|normal|quick|instant`');
         }
     }
     if (message.content === '$help' && message.author.id === config.OwnerID) {

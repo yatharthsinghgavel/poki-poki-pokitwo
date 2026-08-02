@@ -326,6 +326,38 @@ input:checked+.sw-track::before{transform:translateX(17px);}
   .grid{padding:12px 12px 32px;}
 }
 
+/* ── SPEED TRAY ── */
+.spd-tray-wrap { position:relative; display:inline-flex; align-self:center; }
+.spd-trigger {
+  display:inline-flex; align-items:center; gap:7px;
+  padding:9px 16px; border-radius:9px; border:1px solid var(--border);
+  background:rgba(255,255,255,.06); color:var(--text);
+  font-size:.84rem; font-weight:600; cursor:pointer;
+  font-family:'Outfit',sans-serif; transition:all .2s; user-select:none;
+}
+.spd-trigger:hover { border-color:var(--border-h); background:rgba(255,255,255,.09); }
+.spd-trigger .spd-arrow { font-size:.6rem; color:var(--muted); transition:transform .2s; }
+.spd-tray-wrap.open .spd-arrow { transform:rotate(180deg); }
+.spd-tray {
+  display:none; position:absolute; bottom:calc(100% + 8px); left:0;
+  background:#111318; border:1px solid var(--border-h);
+  border-radius:12px; padding:6px; min-width:200px;
+  box-shadow:0 8px 32px rgba(0,0,0,.55);
+  z-index:300; animation:trayIn .15s ease;
+}
+@keyframes trayIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.spd-tray-wrap.open .spd-tray { display:block; }
+.spd-opt {
+  display:flex; align-items:center; gap:10px;
+  padding:9px 12px; border-radius:8px; cursor:pointer;
+  font-size:.84rem; font-weight:600; color:var(--subtle);
+  font-family:'Outfit',sans-serif; transition:background .15s, color .15s;
+  border:none; background:transparent; width:100%; text-align:left;
+}
+.spd-opt:hover { background:rgba(255,255,255,.06); color:var(--text); }
+.spd-opt.active { color:var(--text); }
+.spd-opt .spd-dot { width:8px;height:8px;border-radius:50%;flex-shrink:0; }
+.spd-opt .spd-desc { font-size:.7rem; color:var(--muted); font-weight:400; margin-top:1px; display:block; }
 </style>
 
 </head>
@@ -336,7 +368,7 @@ input:checked+.sw-track::before{transform:translateX(17px);}
   <div class="logo">
     <div class="logo-icon">⚡</div>
     <div class="logo-text">Poketwo <b>Autocatcher</b></div>
-    <span class="logo-ver">v1.6.3</span>
+    <span class="logo-ver">v1.6.4</span>
   </div>
 
   <div class="hrow">
@@ -524,10 +556,30 @@ input:checked+.sw-track::before{transform:translateX(17px);}
       <button class="btn btn-green" onclick="resolveCaptcha()">✅ Mark Captcha Solved</button>
       <button class="btn btn-ghost" id="btn-pause"  onclick="pauseBot()">⏸ Pause</button>
       <button class="btn btn-primary" id="btn-resume" onclick="resumeBot()" style="display:none;">▶️ Resume</button>
-      <div class="mode-pill" title="Catch speed: Normal = stealth 1–7s · Quick = fast 300–800ms · Instant = no delay (ban risk)" style="align-self:center;">
-        <button class="mode-btn active" id="spd-normal"  onclick="setCatchSpeed('normal')">🛡️ Normal</button>
-        <button class="mode-btn"        id="spd-quick"   onclick="setCatchSpeed('quick')">🚀 Quick</button>
-        <button class="mode-btn"        id="spd-instant" onclick="setCatchSpeed('instant')">⚡ Instant</button>
+      <div class="spd-tray-wrap" id="spd-wrap">
+        <button class="spd-trigger" onclick="toggleSpeedTray()" id="spd-trigger">
+          <span id="spd-icon">&#x1F6E1;&#xFE0F;</span>
+          <span id="spd-label">Normal</span>
+          <span class="spd-arrow">&#x25B2;</span>
+        </button>
+        <div class="spd-tray">
+          <button class="spd-opt" id="spd-opt-slow" onclick="pickSpeed('slow')">
+            <span class="spd-dot" style="background:#06b6d4;"></span>
+            <div><span>&#x1F422; Slow</span><span class="spd-desc">8&#x2013;20s &middot; maximum stealth</span></div>
+          </button>
+          <button class="spd-opt active" id="spd-opt-normal" onclick="pickSpeed('normal')">
+            <span class="spd-dot" style="background:#10b981;"></span>
+            <div><span>&#x1F6E1;&#xFE0F; Normal</span><span class="spd-desc">1&#x2013;7s &middot; gaussian anti-detection</span></div>
+          </button>
+          <button class="spd-opt" id="spd-opt-quick" onclick="pickSpeed('quick')">
+            <span class="spd-dot" style="background:#f59e0b;"></span>
+            <div><span>&#x1F680; Quick</span><span class="spd-desc">300&#x2013;800ms &middot; competitor-aware</span></div>
+          </button>
+          <button class="spd-opt" id="spd-opt-instant" onclick="pickSpeed('instant')">
+            <span class="spd-dot" style="background:#ef4444;"></span>
+            <div><span>&#x26A1; Instant</span><span class="spd-desc">No delay &middot; high ban risk</span></div>
+          </button>
+        </div>
       </div>
       <button class="btn btn-ghost" onclick="clearCatches()">🗑 Clear Catches</button>
       <div id="uptime-lbl">
@@ -842,43 +894,67 @@ function applyIncense(d) {
   elIncense.innerHTML = chips.join('') || '<span class="inc-chip off">No channels</span>';
 }
 
-// ── CATCH SPEED ───────────────────────────────────────────────────────────────
+// ── CATCH SPEED TRAY ─────────────────────────────────────────────────────────
+const SPD_META = {
+  slow:    { icon:'🐢', label:'Slow',    dot:'#06b6d4', delayTxt:'8s\u201320s',    sub:'Max stealth',          warn:null },
+  normal:  { icon:'🛡️', label:'Normal',  dot:'#10b981', delayTxt:'1s\u20137s',     sub:'Gaussian anti-detect', warn:null },
+  quick:   { icon:'🚀', label:'Quick',   dot:'#f59e0b', delayTxt:'300\u2013800ms', sub:'Competitor-aware',     warn:'🚀 Quick mode ON — 300–800ms, no stealth guarantee.' },
+  instant: { icon:'⚡', label:'Instant', dot:'#ef4444', delayTxt:'0ms (bypass)',  sub:'No delay',             warn:'⚡ Instant mode ON — no anti-detection delay! High ban risk.' },
+};
+
+function toggleSpeedTray() {
+  const wrap = E('spd-wrap');
+  wrap.classList.toggle('open');
+}
+
+function pickSpeed(speed) {
+  E('spd-wrap').classList.remove('open');
+  setCatchSpeed(speed);
+}
+
 function setCatchSpeed(speed) {
   applyCatchSpeed(speed);
   send({ type: 'set_catch_speed', data: { speed } });
 }
 
 function applyCatchSpeed(speed) {
-  // update pill buttons
-  ['normal','quick','instant'].forEach(s => {
-    const btn = E(`spd-${s}`);
-    if (btn) btn.classList.toggle('active', s === speed);
+  const m = SPD_META[speed] || SPD_META.normal;
+
+  // update trigger button
+  const icon  = E('spd-icon');
+  const label = E('spd-label');
+  if (icon)  icon.textContent  = m.icon;
+  if (label) label.textContent = m.label;
+
+  // update all option rows — highlight active
+  ['slow','normal','quick','instant'].forEach(s => {
+    const opt = E(`spd-opt-${s}`);
+    if (opt) opt.classList.toggle('active', s === speed);
   });
 
-  // style active button with appropriate colour
-  const spdQuick   = E('spd-quick');
-  const spdInstant = E('spd-instant');
-  const spdNormal  = E('spd-normal');
-  if (spdQuick)   { spdQuick.style.background   = speed === 'quick'   ? 'var(--amber)'  : ''; spdQuick.style.color   = speed === 'quick'   ? '#000' : ''; }
-  if (spdInstant) { spdInstant.style.background = speed === 'instant' ? 'var(--red)'    : ''; spdInstant.style.color = speed === 'instant' ? '#fff' : ''; }
-  if (spdNormal)  { spdNormal.style.background  = speed === 'normal'  ? 'var(--green)'  : ''; spdNormal.style.color  = speed === 'normal'  ? '#fff' : ''; }
-
-  // update anti-detect card
-  const delayLabels = { normal: '1s – 7s', quick: '300ms – 800ms', instant: '0ms (bypass)' };
-  const subLabels   = { normal: 'Gaussian delay · stealth', quick: 'Fast catch · competitor-aware', instant: '⚠️ No delay — ban risk!' };
-  if (elAdval) elAdval.textContent = delayLabels[speed] || '1s – 7s';
-  if (elAdsub) elAdsub.textContent = subLabels[speed]   || '';
-  if (elDelay) elDelay.textContent = delayLabels[speed] || '1s – 7s';
-
-  // warning pill for instant
-  if (speed === 'instant') {
-    showWarning('catch_speed', '⚡ Instant mode ON — no anti-detection delay! High ban risk.', 'error');
-  } else if (speed === 'quick') {
-    showWarning('catch_speed', '🚀 Quick mode ON — 300–800ms delay, no stealth guarantee.', 'warn');
+  // colour the trigger border to match the active speed
+  const trigger = E('spd-trigger');
+  if (trigger) {
+    trigger.style.borderColor = m.dot;
+    trigger.style.color       = m.dot;
   }
+
+  // update Anti-Detection card
+  if (elAdval) elAdval.textContent = m.delayTxt;
+  if (elDelay) elDelay.textContent = m.delayTxt;
+  if (elAdsub) elAdsub.textContent = `${m.sub} \u00B7 ${speed.charAt(0).toUpperCase()+speed.slice(1)} mode`;
+
+  // fire warning pill if needed
+  if (m.warn) showWarning('catch_speed', m.warn, speed === 'instant' ? 'error' : 'warn');
 }
 
-// legacy — kept so old server events don't break if they arrive
+// close tray when clicking outside
+document.addEventListener('click', e => {
+  const wrap = E('spd-wrap');
+  if (wrap && !wrap.contains(e.target)) wrap.classList.remove('open');
+});
+
+// legacy shims
 function applyBoost(d) { applyCatchSpeed(d.active ? 'quick' : 'normal'); }
 function applyInstantCatch(d) { applyCatchSpeed(d.active ? 'instant' : 'normal'); }
 function toggleBoost() { send({ type: 'toggle_boost' }); }
